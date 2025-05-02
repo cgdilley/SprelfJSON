@@ -1,0 +1,7 @@
+.idea/
+*.lock
+build/*
+*.env
+dist/*
+/src/sprelf_json.egg-info/
+*.zip
