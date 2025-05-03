@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import typing_inspect
-from typing import Iterable, TypeAlias, get_origin, get_args, Any, TypeVar
+from typing import Iterable, TypeAlias, get_origin, get_args, Any, TypeVar, Iterator
 from types import ModuleType
 import collections
 import typing
@@ -68,6 +68,9 @@ def check_generic_instance(check: Any, expected_origin: Any, *expected_args: Any
 
     if len(expected_args) == 0:
         return True
+
+    if expected_origin in (Iterable, Iterator):
+        return all(check_instance(x, expected_args[0]) for x in check)
 
     if issubclass(expected_origin, type):
         return inspect.isclass(check) and check_subclass(check, expected_args[0])

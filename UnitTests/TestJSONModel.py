@@ -1,3 +1,4 @@
+import json
 import unittest
 from SprelfJSON.JSONModel import *
 from typing import Optional, Union
@@ -28,6 +29,7 @@ class TestJSONModel(unittest.TestCase):
             a_list=[1, 2, 3],
             a_dict={"key": "value"}
         )
+        print(json.dumps(model.to_json()))
         self.assertEqual(model.an_int, 5)
         self.assertEqual(model.a_str, "hello")
 
@@ -44,11 +46,13 @@ class TestJSONModel(unittest.TestCase):
 
     def test_defaults_applied(self):
         model = self.DefaultsModel(required=7)
+        print(json.dumps(model.to_json()))
         self.assertEqual(model.optional, 42)
         self.assertEqual(model.optional_str, "abc")
 
     def test_override_defaults(self):
         model = self.DefaultsModel(required=7, optional=99)
+        print(json.dumps(model.to_json()))
         self.assertEqual(model.optional, 99)
 
 
@@ -66,6 +70,7 @@ class TestJSONModel(unittest.TestCase):
 
     def test_inherited_fields(self):
         model = self.ChildModel(parent_field="base", child_field=123)
+        print(json.dumps(model.to_json()))
         self.assertEqual(model.parent_field, "base")
         self.assertEqual(model.child_field, 123)
 
@@ -88,12 +93,13 @@ class TestJSONModel(unittest.TestCase):
 
 
     def test_subclass_from_json(self):
-        json = {
+        j_obj = {
             "__name": "dog",
             "kind": "dog",
             "breed": "retriever"
         }
-        obj = self.Animal.from_json(json)
+        obj = self.Animal.from_json(j_obj)
+        print(json.dumps(obj.to_json()))
         self.assertIsInstance(obj, self.Dog)
         self.assertEqual(obj.breed, "retriever")
 
@@ -144,11 +150,13 @@ class TestJSONModel(unittest.TestCase):
 
     def test_optional_none_and_union(self):
         model1 = self.OptionalModel(maybe_int=None, union_val="text")
+        print(json.dumps(model1.to_json()))
         self.assertIsNone(model1.maybe_int)
         self.assertEqual(model1.union_val, "text")
 
     def test_optional_with_value_and_union(self):
         model2 = self.OptionalModel(maybe_int=5, union_val=42)
+        print(json.dumps(model2.to_json()))
         self.assertEqual(model2.maybe_int, 5)
         self.assertEqual(model2.union_val, 42)
 
