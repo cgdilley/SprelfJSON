@@ -25,10 +25,11 @@ class JSONModelMeta(ABCMeta):
     _JSON_MODEL = "__json_model__"
     _DEFAULTS = "__defaults__"
     __json_model__: dict[str, ModelElem]
+    __name_field__: str = "__name"
     __name_field_required__: bool = True
+    __include_name_in_json_output__: bool = True
     __allow_null_json_output__: bool = False
     __include_defaults_in_json_output__: bool = False
-    __include_name_in_json_output__: bool = True
     __allow_extra_fields__: bool = False
     __exclusions__: list[str] = []
     __eval_context__ = {**globals(),
@@ -183,7 +184,7 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
             dumped = {k: v for k, v in dumped.items()
                       if v is not None}
         if type(self).__include_name_in_json_output__:
-            dumped[self._name_field()] = self.model_identity()
+            dumped[type(self).__name_field__] = self.model_identity()
         return dumped
 
     #
@@ -193,16 +194,12 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
     #
 
     @classmethod
-    def _name_field(cls) -> str:
-        return "__name"
-
-    @classmethod
     def model_identity(cls) -> JSONType:
         return cls.__name__
 
     @classmethod
     def _pop_name_from_name_field(cls, o: JSONObject) -> JSONType:
-        name_field = cls._name_field()
+        name_field = cls.__name_field__
         if name_field not in o:
             if cls.__name_field_required__:
                 raise JSONModelError(f"Object is missing name field '{name_field}'; cannot "

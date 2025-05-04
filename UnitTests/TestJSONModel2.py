@@ -64,10 +64,7 @@ class ModelWithNesting(JSONModel):
 class BaseModel(JSONModel):
     base_field: str
     shared_field: int = 0
-
-    @classmethod
-    def _name_field(cls) -> str:
-        return "__type" # Custom model identity
+    __name_field__ = "__type"
 
 class SubModelA(BaseModel):
     __name_field_required__ = True # Ensure name field is present
