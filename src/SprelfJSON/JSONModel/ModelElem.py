@@ -6,7 +6,8 @@ from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType
 from SprelfJSON.Helpers import ClassHelpers, TimeHelpers
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 
-from typing import Iterable, Any, TypeVar, Pattern, Callable, Mapping, Collection, Union, Iterator
+from typing import Iterable, Any, TypeVar, Pattern, Callable, Mapping, Collection, Union, Iterator, Sequence, \
+    MutableMapping
 import typing_inspect
 import inspect
 import base64
@@ -216,10 +217,12 @@ class ModelElem(_BaseModelElem):
                  default: T | tuple[()] | None = (),
                  default_factory: Callable[[], T] | None = None,
                  alternates: Iterable[AlternateModelElem] = (),
+                 use_alternates_only: bool = False,
                  ignored: bool = False):
         super().__init__(typ)
         self._ignored = ignored
         self._alternates = list(alternates)
+        self._use_alternates_only = use_alternates_only
         if default_factory is not None:
             self._default_factory = default_factory
             self._default = ()
@@ -257,16 +260,18 @@ class ModelElem(_BaseModelElem):
         if self.ignored:
             return None
 
-        try:
-            return self._parse_value(val, **kwargs)
-        except:
-            if len(self._alternates) == 0:
-                raise
-            for a in self._alternates:
-                try:
-                    return a.transformer(a.parse_value(val, **kwargs))
-                except:
-                    continue
+        if not self._use_alternates_only:
+            try:
+                return self._parse_value(val, **kwargs)
+            except:
+                if len(self._alternates) == 0:
+                    raise
+
+        for a in self._alternates:
+            try:
+                return a.transformer(a.parse_value(val, **kwargs))
+            except:
+                continue
         raise ModelElemError(self, f"Unable to parse value of type '{type(val).__name__}' as "
                                    f"an object of type '{self.annotated_type!r}'" +
                              (f" ({len(self._alternates)} alternates also failed)"
@@ -278,18 +283,20 @@ class ModelElem(_BaseModelElem):
         if self.ignored:
             return None
 
-        try:
-            return self._dump_value(val, key=key, **kwargs)
-        except:
-            if len(self._alternates) == 0:
-                raise
-            for a in self._alternates:
-                if a.jsonifier is None:
-                    continue
-                try:
-                    return a.jsonifier(val)
-                except:
-                    continue
+        if not self._use_alternates_only:
+            try:
+                return self._dump_value(val, key=key, **kwargs)
+            except:
+                if len(self._alternates) == 0:
+                    raise
+
+        for a in self._alternates:
+            if a.jsonifier is None:
+                continue
+            try:
+                return a.jsonifier(val)
+            except:
+                continue
 
         raise ModelElemError(self, f"Unable to dump value of type '{type(val).__name__}' as "
                                    f"an object of type '{self.annotated_type!r}'" +
@@ -301,6 +308,7 @@ class ModelElem(_BaseModelElem):
     def validate(self, value: Any, **kwargs) -> T:
         if self.ignored:
             return None
+
         return super().validate(value, **kwargs)
 
 
@@ -456,11 +464,11 @@ class ModelType_Iterable(ModelType):
 
     @classmethod
     def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
-        return elem.origin in (Iterable, Iterator)
+        return elem.origin in (Iterable, Iterator, Sequence, Collection)
 
     @classmethod
     def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
-        return (isinstance(val, Iterable) or isinstance(val, Iterator)) \
+        return (isinstance(val, elem.origin)) \
             and (len(elem.generics) == 0 or all(elem.generics[0].is_valid(x) for x in val))
 
     @classmethod
@@ -595,8 +603,13 @@ class ModelType_Tuple(ModelType_List):
                                **kwargs)
 
 
-class ModelType_Dict(ModelType_Object):
-    t = dict
+class ModelType_Dict(ModelType):
+
+
+    @classmethod
+    def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
+        return elem.origin in (Mapping, MutableMapping) \
+            or (inspect.isclass(elem.origin) and issubclass(elem.origin, dict))
 
     @classmethod
     def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:

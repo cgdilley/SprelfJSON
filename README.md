@@ -1,3 +1,4 @@
+from SprelfJSON import JSONModel
 
 # SprelfJSON - `JSONModel`
 
@@ -61,13 +62,13 @@ print(dumped_data_default) # Output: {'name': 'David', 'age': 35} (is_active is 
 ```
 
 ## Defining Models
-You define a JSON model by creating a class that inherits from JSONModel and using type annotations for the expected fields.
+You define a JSON model by creating a class that inherits from `JSONModel` and using type annotations for the expected fields.
 
 ```python
 from __future__ import annotations
 
 from typing import Optional, Union
-from SprelfJSON.JSONModel.JSONModel import JSONModel, ModelElem
+from SprelfJSON import JSONModel, ModelElem
 import datetime
 
 class Product(JSONModel):
@@ -75,6 +76,7 @@ class Product(JSONModel):
     name: str
     price: float
     tags: list[str] # List of strings
+    
     attributes: dict[str, str] # Dictionary with string keys and string values
     description: Optional[str] = None # Optional field, can be None
     created_at: datetime.datetime # Using a complex type
@@ -101,7 +103,7 @@ class UserProfile(JSONModel):
 This library handles a variety of common datatypes, converting them to and from native JSON types when dumping and parsing.
 
 ### JSON Native Types
-`str`, `int`, `float`, `bool`, `None (null)` are parsed and dumped directly.
+`str`, `int`, `float`, `bool`, `None` are parsed and dumped directly.
 
 ### Complex Types
 `datetime.datetime`, `datetime.date`, `datetime.time`, `datetime.timedelta`, `bytes`, `re.Pattern` are automatically 
@@ -136,7 +138,7 @@ print(dumped_event)     # Output: The original JSON
 ```
 
 ### Enums
-`enum.Enum`, `enum.IntEnum`, `enum.StrEnum`, and `enum.IntFlag` are supported. Plain Enums are dumped by name, the others by value.
+`enum.Enum`, `enum.IntEnum`, `enum.StrEnum`, and `enum.IntFlag` are supported. Plain Enums are dumped by name, the others by value.  They can be parsed as either.
 
 ```python
 import enum
@@ -175,7 +177,8 @@ print(dumped_task)      # Output: {'status': 'PROCESSING', 'flags': 3}
 ```
 
 ### Generic Types
-`list`, `dict`, `set`, `tuple`, `type`, `Union`, and `Optional` are supported.
+`list`, `dict`, `set`, `tuple`, `type`, `Iterable`, `Iterator`, `Sequence`, `Mapping`, `MutableMapping`, `Collection`, `Union`, and `Optional` are supported.
+`Iterable`s are not handled lazily.
 
 ```python
 from __future__ import annotations
@@ -186,6 +189,7 @@ class DataContainer(JSONModel):
     settings: dict[str, bool]
     value: Union[str, int]
     optional_items: Optional[list[float]]
+    a_type: type[JSONModel]
     coords: tuple[float, float]
     tags: set[str]
 
@@ -195,6 +199,7 @@ json_data = {
     "settings": {"enabled": True, "visible": False},
     "value": "hello",
     "optional_items": [1.1, 2.2],
+    "a_type": "SomeJSONModelType",
     "coords": [10.5, 20.1], # JSON array is parsed as tuple
     "tags": ["tag1", "tag2", "tag1"] # JSON array is parsed as set
 }
@@ -204,6 +209,7 @@ print(type(container.items).__name__)           # Output: "list"
 print(type(container.settings).__name__)        # Output: "dict"
 print(type(container.value).__name__)           # Output: "str"
 print(type(container.optional_items).__name__)  # Output: "list"
+print(type(container.a_type).__name__)          # Output: "type"
 print(type(container.coords).__name__)          # Output: "tuple"
 print(type(container.tags).__name__)            # Output: "set"
 
@@ -227,7 +233,7 @@ class Customer(JSONModel):
     customer_id: int
     name: str
     shipping_address: Address
-    past_orders: list[Order] # Assuming an Order JSONModel exists
+    past_orders: list[Order]
 ```
 
 ### Dynamic Subclass Parsing
@@ -293,7 +299,7 @@ for shape in drawing.shapes:
 
 ### Support for Additional Types
 
-If you want to extend the available types, you can create a new class that is a subclass of `ModelType`, implementing
+If you want to extend the supported types, you can create a new class that is a subclass of `ModelType`, implementing
 the required methods.  
 
 ```python
@@ -305,11 +311,12 @@ class ModelType_PatternExample(ModelType):
     def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
         return elem.origin == re.Pattern
     
-    
+    # This is used for validating if a value in a particular field meets the criteria for this type
     @classmethod
     def is_valid(cls, val: Any, elem: _BaseModelElem, **kwargs) -> bool:
         return isinstance(val, elem.origin)
 
+    # This is used for parsing a value to the desired type; usually is given a JSON value
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
         if isinstance(val, re.Pattern):
@@ -318,6 +325,7 @@ class ModelType_PatternExample(ModelType):
             return re.compile(val)
         raise ModelElemError(elem, "Woops, can't parse this!")
 
+    # This is used to dump the value into a JSON-compatible type
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         definitely_a_pattern_now = elem.parse_value(val, **kwargs)
@@ -328,21 +336,28 @@ class ModelType_PatternExample(ModelType):
 > 
 >A list of all `ModelType` subclasses is cached the first time any `JSONModel` object is
 >dumped, parsed, or validated.  As long as your subclass is defined before this, it will be automatically included.
->If you need to further manipulation of the allowed types, see `_AliasedModelTypes` and `_ConcreteModelTypes` on `ModelElem`
+>If you need further manipulation of the allowed types, see `_AliasedModelTypes` and `_ConcreteModelTypes` on `ModelElem`
 
 
 ### Alternate Parsing and Dumping
 Use `AlternateModelElem` within a `ModelElem` definition to specify alternative ways to parse incoming data or dump outgoing data.
+These objects are defined like `ModelElem`, but expect to find a different type, and define a function to convert
+from that type to the original type that the `ModelElem` expects.
+
+When parsing or dumping, it will first attempt to operate in its native type.  Only if that fails, it will then attempt
+doing so with each of the defined alternate definitions.  To override this behavior and forcibly use these alternates, you 
+may provide the `use_alternates_only` parameter.
 
 ```python
-from SprelfJSON.JSONModel.JSONModel import JSONModel, ModelElem, AlternateModelElem
+from SprelfJSON import JSONModel, ModelElem, AlternateModelElem
 
 class DataItem(JSONModel):
     # Can parse an integer from a string
     count: ModelElem(int, alternates=[AlternateModelElem(str, int)])
 
     # Can dump a boolean as a string "true" or "false"
-    is_valid: ModelElem(bool, alternates=[AlternateModelElem(str, lambda s: s.lower() == "true", jsonifier=lambda b: str(b).lower())])
+    is_valid: ModelElem(bool, alternates=[AlternateModelElem(str, lambda s: s.lower() == "true", jsonifier=lambda b: str(b).lower())],
+                        use_alternates_only=True)
 
 # Example usage
 json_data = {
@@ -355,7 +370,7 @@ print(item.count)     # Output: 50 (parsed as int)
 print(item.is_valid)  # Output: True (parsed as bool)
 
 dumped_data = item.to_json()
-print(dumped_data)  # Output: {'count': 50, 'is_valid': 'true'} (dumped with alternate jsonifier)
+print(dumped_data)  # Output: {'count': 50, 'is_valid': "true"} # 'count' dumped as int, 'is_valid' dumped as string
 ```
 
 ## Error Handling
@@ -363,7 +378,7 @@ print(dumped_data)  # Output: {'count': 50, 'is_valid': 'true'} (dumped with alt
 validation, or dumping.
 
 ```python
-from SprelfJSON.JSONModel.JSONModel import JSONModel, JSONModelError
+from SprelfJSON import JSONModel, JSONModelError
 
 class StrictModel(JSONModel):
     required_field: str
