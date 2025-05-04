@@ -4,7 +4,7 @@ from SprelfJSON.JSONModel import *
 from typing import Optional, Union
 
 
-# THESE TESTS HAVE BEEN AI-GENERATED
+# THESE TESTS HAVE BEEN AI-GENERATED (CHATGPT)
 
 # ---------------------------
 # ✅ BASIC FIELD TYPE TESTING

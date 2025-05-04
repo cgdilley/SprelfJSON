@@ -3,8 +3,10 @@ import re
 
 
 DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
+DATETIME_FORMAT2 = "%Y-%m-%dT%H:%M:%S"
 DATE_FORMAT = "%Y-%m-%d"
 TIME_FORMAT = "%H:%M:%S.%f"
+TIME_FORMAT2 = "%H:%M:%S"
 
 
 TIMEDELTA_REGEX = re.compile('^(days=(?P<d>\d+),)?(hours=(?P<h>\d+),)?(minutes=(?P<m>\d+),)?seconds=(?P<s>\d+)(\.(?P<ms>\d+))?$')
@@ -29,7 +31,10 @@ def stringify_date(d: date):
 
 
 def parse_datetime_string(s: str) -> datetime:
-    return datetime.strptime(s, DATETIME_FORMAT)
+    try:
+        return datetime.strptime(s, DATETIME_FORMAT)
+    except ValueError:
+        return datetime.strptime(s, DATETIME_FORMAT2)
 
 
 def parse_datetime(d: datetime | date | time | str | float | int) -> datetime:
@@ -51,7 +56,10 @@ def parse_datetime(d: datetime | date | time | str | float | int) -> datetime:
 
 
 def parse_date_string(s: str) -> date:
-    return datetime.strptime(s, DATE_FORMAT).date()
+    try:
+        return datetime.strptime(s, DATE_FORMAT).date()
+    except ValueError:
+        return parse_datetime_string(s).date()
 
 
 def parse_date(d: datetime | date | str | float | int) -> date:
@@ -67,7 +75,10 @@ def parse_date(d: datetime | date | str | float | int) -> date:
 
 
 def parse_time_string(s: str) -> time:
-    return datetime.strptime(s, TIME_FORMAT).time()
+    try:
+        return datetime.strptime(s, TIME_FORMAT).time()
+    except ValueError:
+        return datetime.strptime(s, TIME_FORMAT2).time()
 
 
 def parse_time(t: datetime | time | str | float | int) -> time:

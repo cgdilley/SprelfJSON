@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from abc import ABCMeta, ABC, abstractmethod
-from typing import Any, Hashable, Self, Mapping, dataclass_transform
-from types import resolve_bases, new_class
+from typing import Any, Hashable, Self, Mapping, dataclass_transform, TypeAlias
+from types import resolve_bases, new_class, GenericAlias
 import typing
 import itertools
 import inspect
@@ -28,6 +28,8 @@ class JSONModelMeta(ABCMeta):
     __name_field_required__: bool = True
     __allow_null_json_output__: bool = False
     __include_defaults_in_json_output__: bool = False
+    __include_name_in_json_output__: bool = True
+    __allow_extra_fields__: bool = False
     __exclusions__: list[str] = []
     __eval_context__ = {**globals(),
                         **SupportedTypeMap,
@@ -38,7 +40,7 @@ class JSONModelMeta(ABCMeta):
     @classmethod
     def _eval(cls, s: Any, context: dict):
         if inspect.isclass(s) or typing_inspect.is_generic_type(s) or typing_inspect.is_union_type(s) or \
-                typing_inspect.is_optional_type(s) or isinstance(s, ModelElem):
+                typing_inspect.is_optional_type(s) or isinstance(s, ModelElem) or type(s) == GenericAlias:
             return s
         try:
             return eval(s, context)
@@ -136,7 +138,8 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
 
     def __init__(self, **kwargs):
         model = type(self).model()
-        validated = type(self).validate_model(model=model, values=kwargs, ignore_extra=False)
+        validated = type(self).validate_model(model=model, values=kwargs,
+                                              ignore_extra=kwargs.get("ignore_extra", type(self).__allow_extra_fields__))
         for k, v in validated.items():
             setattr(self, k, v)
 
@@ -162,16 +165,8 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         """
         copy = {k: v for k, v in o.items()}
         subclass = cls._extract_subclass(copy)
-        return subclass(**subclass.parse_json(o))
+        return subclass(**copy, **kwargs)
 
-    @classmethod
-    def parse_json(cls, o: JSONObject):
-        """
-        Parses the given JSON into valid input for an object of this type
-        """
-        return {k: elem.parse_value(o[k])
-                for k, elem in getattr(cls, cls._JSON_MODEL, {}).items()
-                if k in o}
 
     def to_json(self, **kwargs) -> JSONObject:
         """
@@ -179,13 +174,16 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         """
         model = self.model()
         dumped = {k: elem.dump_value(getattr(self, k), key=k)
-                  for k, elem in model.items()}
+                  for k, elem in model.items()
+                  if not elem.ignored}
         if not type(self).__include_defaults_in_json_output__:
             dumped = {k: v for k, v in dumped.items()
                       if not model[k].has_default() or v != model[k].default}
         if not type(self).__allow_null_json_output__:
             dumped = {k: v for k, v in dumped.items()
                       if v is not None}
+        if type(self).__include_name_in_json_output__:
+            dumped[self._name_field()] = self.model_identity()
         return dumped
 
     #
@@ -257,6 +255,9 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         result: dict[str, Any] = dict()
         values = {**values}
         for k, m in model.items():
+            if m.ignored:
+                values.pop(k, None)
+                continue
             if k not in values:
                 if not m.has_default():
                     raise JSONModelError(f"Missing required key '{k}' on '{cls.__name__}'.")
