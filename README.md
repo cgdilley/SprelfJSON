@@ -1,5 +1,3 @@
-from SprelfJSON import JSONModel
-
 # SprelfJSON - `JSONModel`
 
 **JSONModel** simplifies the process of working with JSON data in Python by allowing you to define the structure of your 
@@ -183,6 +181,7 @@ print(dumped_task)      # Output: {'status': 'PROCESSING', 'flags': 3}
 ```python
 from __future__ import annotations
 from typing import Union, Optional
+from SprelfJSON import JSONModel
 
 class DataContainer(JSONModel):
     items: list[int]
