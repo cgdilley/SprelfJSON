@@ -60,7 +60,7 @@ print(dumped_data_default) # Output: {'name': 'David', 'age': 35} (is_active is 
 ```
 
 ## Defining Models
-You define a JSON model by creating a class that inherits from `JSONModel` and using type annotations for the expected fields.
+Define a JSON model by creating a class that inherits from `JSONModel` and using type annotations for the expected fields.
 
 ```python
 from __future__ import annotations
@@ -80,7 +80,7 @@ class Product(JSONModel):
 ```
 
 ## Fields with Default Values
-You can provide default values directly in the class definition:
+Provide any default values directly in the class definition:
 
 ```python
 class Settings(JSONModel):
@@ -236,7 +236,7 @@ class Customer(JSONModel):
 ```
 
 ### Dynamic Subclass Parsing
-`JSONModel` can automatically determine and instantiate the correct subclass based on a field in the JSON data.
+`JSONModel` can automatically determine and instantiate the correct subclass based on a specified field in the JSON data.
 
 Define a base class and subclasses:
 
@@ -257,10 +257,7 @@ class Circle(Shape):
 
 class Square(Shape):
     side_length: float
-    
-    @classmethod
-    def model_identity(cls) -> str:
-        return "square" # Value in the 'type' field for this subclass
+    # Use default identity for this class (class's name, 'Square')
 
 # You can then have a model containing a list of shapes
 class Drawing(JSONModel):
@@ -273,7 +270,7 @@ Parse JSON containing different shape types:
 json_drawing = {
     "shapes": [
         {"type": "circle", "color": "red", "radius": 10.0},
-        {"type": "square", "color": "blue", "side_length": 5.0},
+        {"type": "Square", "color": "blue", "side_length": 5.0},
         {"type": "circle", "color": "green", "radius": 2.5}
     ]
 }
@@ -287,7 +284,7 @@ for shape in drawing.shapes:
     elif isinstance(shape, Square):
         print(f"Square side length: {shape.side_length}")
 
-# Output:
+#  Output -
 # Shape color: red
 # Circle radius: 10.0
 # Shape color: blue
@@ -296,9 +293,16 @@ for shape in drawing.shapes:
 # Circle radius: 2.5
 ```
 
+By default:
+ - The name field (specified by `__name_field__`) is `"__name"`
+ - The name field is required
+ - The model identity for a class (the matching value to find in this name field) is the name of the class (ie. `cls.__name__`)
+
+See "Extra Options" section for more details.
+
 ### Support for Additional Types
 
-If you want to extend the supported types, you can create a new class that is a subclass of `ModelType`, implementing
+To extend the supported types, create a new class that is a subclass of `ModelType`, implementing
 the required methods.  
 
 ```python
@@ -406,9 +410,9 @@ except JSONModelError as e:
 ```
 
 
-## Extra options
+## Extra Options
 
-There are some class-level options to define certain types of behavior by the class it's applied to and all subclasses.
+There are some class-level options in `JSONModel` to define certain types of behavior by the class it's applied to and all subclasses.
 
 - `__name_field__: str`: When parsing, the name of the JSON field that stores the name of the `JSONModel` object to dynamically parse.  Defaults as `"__name"`
 - `__name_field_required__: bool`: When parsing, will reject any JSON objects that do not have the name field defined.  Defaults as `True`
@@ -418,3 +422,7 @@ There are some class-level options to define certain types of behavior by the cl
 - `__allow_extra_fields__: bool`: When parsing, whether to raise an error if there are extra fields that don't belong to the model.  If `True`, then they are simply ignored.  Defaults as `False`
 - `__exclusions__: list[str]`: A list of fields that are defined, but should be ignored for the purposes of parsing/dumping.
 - `__eval_context__: dict[str, ...]`: A map of modules and classes to include when evaluating the annotations (which are read as strings) into actual types.
+
+There are additional class-level options in `ModelElem`:
+ - `__base64_altchars__: tuple[bytes, ...]`: A list of 2-character byte strings that define the allowable base64 alternate characters when parsing a string to `bytes`.
+The parser will try each one in order until one succeeds.  The dumper will always use the first byte string here.  By default, is defined as `(b"-_", b"+/")`, preferring URL-safe altchars.
