@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from types import UnionType, NoneType
+from types import UnionType, NoneType, GeneratorType
 
 from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType
 from SprelfJSON.Helpers import ClassHelpers, TimeHelpers
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 
-from typing import Iterable, Any, TypeVar, Pattern, Callable, Mapping, Collection, Union, Iterator, Sequence, \
-    MutableMapping
+from typing import Any, TypeVar, Callable, Union
+from collections.abc import Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection, \
+    Iterator, Iterable, Generator, Set
 import typing_inspect
 import inspect
 import base64
@@ -20,8 +21,10 @@ from enum import Enum, StrEnum, IntEnum, IntFlag
 
 T2 = TypeVar('T2')
 SupportedTypes = (dict, list, set, tuple, bool, str, int, float, bytes, type, None,
-                  datetime, date, time, timedelta, Pattern, re.Pattern,
+                  datetime, date, time, timedelta, re.Pattern,
                   Enum, StrEnum, IntEnum, IntFlag,
+                  Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection,
+                  Iterable, Iterator, Generator,
                   JSONable, UnionType, NoneType)
 SupportedUnion = Union[SupportedTypes]
 SupportedTypeMap = {t.__name__: t for t in SupportedTypes if t is not None}
@@ -460,23 +463,18 @@ class ModelType_Optional(ModelType):
             return elem.generics[0].dump_value(val, **kwargs)
 
 
-class ModelType_Iterable(ModelType):
+class ModelType_Generator(ModelType):
 
     @classmethod
     def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
-        return elem.origin in (Iterable, Iterator, Sequence, Collection)
-
-    @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
-        return (isinstance(val, elem.origin)) \
-            and (len(elem.generics) == 0 or all(elem.generics[0].is_valid(x) for x in val))
+        return elem.origin in (Generator, Iterable, Iterator, GeneratorType)
 
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
-        if not any(isinstance(val, x) for x in (Iterable, Iterator)):
+        if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"is not iterable.")
         if len(elem.generics) > 0:
-            return (elem.generics[0].parse_value(v) for v in val)
+            return (elem.generics[0].dump_value(v) for v in val) # Stays lazy
         return val
 
     @classmethod
@@ -489,28 +487,29 @@ class ModelType_Iterable(ModelType):
         return list(parsed)
 
 
-
-class ModelType_Pattern(ModelType):
+class ModelType_Sequence(ModelType_Generator):
 
     @classmethod
     def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
-        return elem.origin in (Pattern, re.Pattern)
+        return elem.origin in (Sequence, Collection, MutableSequence, MutableSet, Set)
+
+    @classmethod
+    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+        return (isinstance(val, elem.origin)) \
+            and (len(elem.generics) == 0 or all(elem.generics[0].is_valid(x) for x in val))
 
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
-        if isinstance(val, Pattern):
-            return val
-        if isinstance(val, str):
-            try:
-                return re.compile(val)
-            except:
-                raise ModelElemError(elem, f"Unable to compile string as a regular expression.")
-        raise cls._parse_error(val, elem, f"as a regular expression.", **kwargs)
-
-    @classmethod
-    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
-        parsed = cls._parse_for_dump(val, elem, **kwargs)
-        return parsed.pattern
+        if not isinstance(val, Iterable):
+            raise cls._parse_error(val, elem, f"is not iterable.")
+        if len(elem.generics) > 0:
+            val = (elem.generics[0].parse_value(v) for v in val)
+        if elem.origin in (Sequence, Collection, MutableSequence):
+            return list(val)
+        elif elem.origin in (MutableSet, Set):
+            return set(val)
+        raise ModelElemError(elem, f"Unable to find suitable type to parse value as given "
+                             f"the expected type '{elem.annotated_type!r}'")
 
 
 class ModelType_Object(ModelType, ABC):
@@ -545,7 +544,7 @@ class ModelType_List(ModelType_Object):
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         if not isinstance(parsed, Iterable):
-            raise cls._dump_error(val, elem, f" is not iterable; "
+            raise cls._dump_error(val, elem, f"is not iterable; "
                                        f"cannot dump as a JSON array.", **kwargs)
         if len(elem.generics) > 0:
             return [elem.generics[0].dump_value(v) for v in parsed]
@@ -554,6 +553,10 @@ class ModelType_List(ModelType_Object):
 
 class ModelType_Set(ModelType_List):
     t = set
+
+
+class ModelType_FrozenSet(ModelType_List):
+    t = frozenset
 
 
 class ModelType_Tuple(ModelType_List):
@@ -702,29 +705,35 @@ class ModelType_Basic(ModelType_Concrete):
 
     @classmethod
     def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
-        if isinstance(val, elem.origin):
-            return val
-        elif issubclass(elem.origin, float) and isinstance(val, int):
+        if issubclass(elem.origin, float) and isinstance(val, int):
             return float(val)
-        elif issubclass(elem.origin, str) and any(isinstance(val, x) for x in (int, float)):
-            return str(val)
-        elif isinstance(val, str):
-            if issubclass(elem.origin, bool):
-                return val.lower() != "false"
-            try:
-                if issubclass(elem.origin, float):
-                    return float(val)
-                if issubclass(elem.origin, int):
-                    return int(val)
-            except ValueError:
-                raise cls._parse_error(val, elem, f"as an integer or float")
-        elif issubclass(elem.origin, bool):
-            return bool(val)
         raise cls._parse_error(val, elem, "as one of the basic types.", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs)
+
+
+
+class ModelType_Pattern(ModelType_Concrete):
+
+    @classmethod
+    def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
+        return issubclass(elem.origin, re.Pattern)
+
+    @classmethod
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+        if isinstance(val, str):
+            try:
+                return re.compile(val)
+            except:
+                raise ModelElemError(elem, f"Unable to compile string as a regular expression.")
+        raise cls._parse_error(val, elem, f"as a regular expression.", **kwargs)
+
+    @classmethod
+    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
+        parsed = cls._parse_for_dump(val, elem, **kwargs)
+        return parsed.pattern
 
 
 class ModelType_DateTime(ModelType_Concrete):
@@ -809,7 +818,6 @@ class ModelType_TimeDelta(ModelType_Concrete):
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) ->JSONType:
-
         return int(cls._parse_for_dump(val, elem, **kwargs).total_seconds() * 1000)
 
 

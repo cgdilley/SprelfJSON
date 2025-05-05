@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sprelf-json-test"
+version = "2025.05.05.0"
+authors = [
+    { name = "Christopher Dilley", email = "christopher@cabuu.de" }
+]
+description = "Simplifies defining schema for and managing JSON objects with non-JSON types"
+readme = "README.md"
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "typing-inspect"
+]
+license = "GNU"
+license-files = ["LICEN[SC]E.*"]
+
+[project.urls]
+repository = "https://github.com/cgdilley/SprelfJSON"

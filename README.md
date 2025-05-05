@@ -74,7 +74,6 @@ class Product(JSONModel):
     name: str
     price: float
     tags: list[str] # List of strings
-    
     attributes: dict[str, str] # Dictionary with string keys and string values
     description: Optional[str] = None # Optional field, can be None
     created_at: datetime.datetime # Using a complex type
@@ -175,8 +174,9 @@ print(dumped_task)      # Output: {'status': 'PROCESSING', 'flags': 3}
 ```
 
 ### Generic Types
-`list`, `dict`, `set`, `tuple`, `type`, `Iterable`, `Iterator`, `Sequence`, `Mapping`, `MutableMapping`, `Collection`, `Union`, and `Optional` are supported.
-`Iterable`s are not handled lazily.
+`list`, `dict`, `set`, `frozenset`, `tuple`, `type`, `Iterable`, `Iterator`, `Generator`, `Sequence`, `MutableSequence`, `Set`, `MutableSet`, `Mapping`, `MutableMapping`, `Collection`, `Union`, and `Optional` are supported.
+
+The following classes maintain any lazy properties when parsing (deferring validation until iterated): `Iterable`, `Iterator`, `Generator`
 
 ```python
 from __future__ import annotations
