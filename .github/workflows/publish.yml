@@ -1,5 +1,8 @@
 name: Publish distribution to TestPyPI
-on: push
+on:
+  push:
+    branches:
+      - main
 permissions:
   contents: read
 jobs:
@@ -35,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/sprelf-json
+      url: https://test.pypi.org/p/sprelf-json-test
     permissions:
       id-token: write
     steps:
