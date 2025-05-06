@@ -8,6 +8,9 @@ from typing import Optional, Union
 from SprelfJSON import *
 
 
+# THESE TESTS WERE AI-GENERATED AND MANUALLY TWEAKED
+
+
 # Define some simple JSONModel subclasses for testing
 class SimpleModel(JSONModel):
     __name_field_required__ = False

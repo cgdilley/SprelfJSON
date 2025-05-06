@@ -55,6 +55,7 @@ class _BaseModelElem(ABC):
         t, gen = type(self)._validate_definition(typ)
         self.origin: type[T] = t
         self.generics: tuple[_BaseModelElem, ...] = gen
+        self._model_type: type[ModelType] | None = None
 
     def __repr__(self) -> str:
         return str(self)
@@ -73,20 +74,20 @@ class _BaseModelElem(ABC):
     def annotated_type(self) -> type[T]:
         return ClassHelpers.as_generic(self.origin, *(g.annotated_type for g in self.generics))
 
-    def is_valid(self, value: Any, **kwargs) -> bool:
+    def is_valid(self, value: Any, *, key: str | None = None, **kwargs) -> bool:
         try:
-            _ = self.validate(value, **kwargs)
+            _ = self.validate(value, key=key, **kwargs)
             return True
         except ModelElemError:
             return False
 
-    def validate(self, value: Any, **kwargs) -> T:
+    def validate(self, value: Any, *, key: str | None = None, **kwargs) -> T:
         """
         Validates that the given value conforms to the type defined by this model element, transforming
         it if needed, and returning that potentially-transformed value.
         """
-        parsed = self.parse_value(value, **kwargs)
-        if self._is_valid(parsed, **kwargs):
+        parsed = self.parse_value(value, key=key, **kwargs)
+        if self._is_valid(parsed, key=key, **kwargs):
             return parsed
 
         if isinstance(value, list) or isinstance(value, set):
@@ -109,28 +110,37 @@ class _BaseModelElem(ABC):
     def _resolve_model_types(cls):
         if cls._AliasedModelTypes is None or cls._ConcreteModelTypes is None:
             cls._AliasedModelTypes = [mt for mt in ClassHelpers.all_subclasses(ModelType)
-                                       if not inspect.isabstract(mt)]
+                                      if not inspect.isabstract(mt)]
             cls._ConcreteModelTypes = [cls._AliasedModelTypes.pop(i)
-                                        for i, mt in reversed(list(enumerate(cls._AliasedModelTypes)))
-                                        if issubclass(mt, ModelType_Concrete)]
+                                       for i, mt in reversed(list(enumerate(cls._AliasedModelTypes)))
+                                       if issubclass(mt, ModelType_Concrete)]
+
+    def get_matching_model_type(self, **kwargs) -> type[ModelType]:
+        if self._model_type is None:
+            self._resolve_model_types()
+            for mt in self._AliasedModelTypes:
+                if mt.test_origin(self, **kwargs):
+                    self._model_type = mt
+                    return mt
+            if inspect.isclass(self.origin):
+                for mt in self._ConcreteModelTypes:
+                    if mt.test_origin(self, **kwargs):
+                        self._model_type = mt
+                        return mt
+
+            raise ModelElemError(self, f"Unable to identify matching ModelType for ModelElem with origin "
+                                       f"of type '{self.annotated_type!r}'")
+
+        return self._model_type
 
     #
 
     def validate_type(self, val: T, **kwargs) -> bool:
-        self._resolve_model_types()
-
-        for mt in self._AliasedModelTypes:
-            if mt.test_origin(self, **kwargs):
-                return mt.is_valid(val, self, **kwargs)
-        if not inspect.isclass(self.origin):
-            raise ModelElemError(self, f"Unable to validate value from ModelElem with origin "
-                                 f"of type '{self.annotated_type!r}'")
-        for mt in self._ConcreteModelTypes:
-            if mt.test_origin(self, **kwargs):
-                return mt.is_valid(val, self, **kwargs)
-
-        return False
-
+        try:
+            mt = self.get_matching_model_type(**kwargs)
+            return mt.is_valid(val, self, **kwargs)
+        except ModelElemError:
+            return False
 
     def parse_value(self, val: Any, **kwargs) -> T:
         """
@@ -140,20 +150,8 @@ class _BaseModelElem(ABC):
         return self._parse_value(val)
 
     def _parse_value(self, val: Any, **kwargs) -> T:
-        self._resolve_model_types()
-
-        for mt in self._AliasedModelTypes:
-            if mt.test_origin(self, **kwargs):
-                return mt.parse(val, self, **kwargs)
-        if not inspect.isclass(self.origin):
-            raise ModelElemError(self, f"Unable to parse value for ModelElem with origin "
-                                       f"of type '{self.annotated_type!r}'")
-        for mt in self._ConcreteModelTypes:
-            if mt.test_origin(self, **kwargs):
-                return mt.parse(val, self, **kwargs)
-
-        raise ModelElemError(self, f"Found no suitable model element type to parse "
-                                   f"value for model element with origin of type '{self.annotated_type!r}'.")
+        mt = self.get_matching_model_type(**kwargs)
+        return mt.parse(val, self, **kwargs)
 
     #
 
@@ -170,21 +168,8 @@ class _BaseModelElem(ABC):
         return self._dump_value(val, key=key)
 
     def _dump_value(self, val: T, **kwargs) -> JSONType:
-        self._resolve_model_types()
-
-        for mt in self._AliasedModelTypes:
-            if mt.test_origin(self, **kwargs):
-                return mt.dump(val, self, **kwargs)
-        if not inspect.isclass(self.origin):
-            raise ModelElemError(self, f"Unable to dump value from ModelElem with origin "
-                                 f"of type '{self.annotated_type!r}'")
-        for mt in self._ConcreteModelTypes:
-            if mt.test_origin(self, **kwargs):
-                return mt.dump(val, self, **kwargs)
-
-        raise ModelElemError(self, f"Found no suitable model element type to dump "
-                                   f"value for model element with origin of type '{self.annotated_type!r}'.")
-
+        mt = self.get_matching_model_type(**kwargs)
+        return mt.dump(val, self, **kwargs)
 
     #
 
@@ -259,25 +244,25 @@ class ModelElem(_BaseModelElem):
     #
 
     # OVERRIDE
-    def parse_value(self, val: Any, **kwargs) -> T:
+    def parse_value(self, val: Any, *, key: str | None = None, **kwargs) -> T:
         if self.ignored:
             return None
 
         if not self._use_alternates_only:
             try:
-                return self._parse_value(val, **kwargs)
+                return self._parse_value(val, key=key, **kwargs)
             except:
                 if len(self._alternates) == 0:
                     raise
 
         for a in self._alternates:
             try:
-                return a.transformer(a.parse_value(val, **kwargs))
+                return a.transformer(a.parse_value(val, key=key, **kwargs))
             except:
                 continue
         raise ModelElemError(self, f"Unable to parse value of type '{type(val).__name__}' as "
                                    f"an object of type '{self.annotated_type!r}'" +
-                             (f" ({len(self._alternates)} alternates also failed)"
+                             (f" ({len(self._alternates)} alternate(s) also failed)"
                               if len(self._alternates) > 0 else "") +
                              ".")
 
@@ -366,7 +351,6 @@ class ModelType(ABC):
         k_str = f" on key '{k}'" if (k := kwargs.pop("key", None)) else ""
         return ModelElemError(elem, f"Unable to parse value of type '{type(val).__name__}'{k_str} " + message)
 
-
     @classmethod
     def _dump_error(cls, val: Any, elem: _BaseModelElem, message: str, **kwargs) -> ModelElemError:
         k_str = f" on key '{k}'" if (k := kwargs.pop("key", None)) else ""
@@ -377,7 +361,7 @@ class ModelType(ABC):
         try:
             return elem.validate(val)
         except ModelElemError as e:
-            raise cls._dump_error(val, elem, " as the expected type '{elem.annotated_type!r}'; "
+            raise cls._dump_error(val, elem, f"as the expected type '{elem.annotated_type!r}'; "
                                              f"could not be validated: {str(e)}", **kwargs)
 
 
@@ -474,7 +458,7 @@ class ModelType_Generator(ModelType):
         if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"is not iterable.")
         if len(elem.generics) > 0:
-            return (elem.generics[0].dump_value(v) for v in val) # Stays lazy
+            return (elem.generics[0].dump_value(v) for v in val)  # Stays lazy
         return val
 
     @classmethod
@@ -509,7 +493,7 @@ class ModelType_Sequence(ModelType_Generator):
         elif elem.origin in (MutableSet, Set):
             return set(val)
         raise ModelElemError(elem, f"Unable to find suitable type to parse value as given "
-                             f"the expected type '{elem.annotated_type!r}'")
+                                   f"the expected type '{elem.annotated_type!r}'")
 
 
 class ModelType_Object(ModelType, ABC):
@@ -545,7 +529,7 @@ class ModelType_List(ModelType_Object):
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         if not isinstance(parsed, Iterable):
             raise cls._dump_error(val, elem, f"is not iterable; "
-                                       f"cannot dump as a JSON array.", **kwargs)
+                                             f"cannot dump as a JSON array.", **kwargs)
         if len(elem.generics) > 0:
             return [elem.generics[0].dump_value(v) for v in parsed]
         return list(parsed)
@@ -585,7 +569,7 @@ class ModelType_Tuple(ModelType_List):
         elif len(elem.generics) == len(val):
             return cls.t(g.parse_value(v) for g, v in zip(elem.generics, val))
         raise cls._parse_error(val, elem, f"has the wrong number of "
-                                   f"elements to be parsed as a '{elem.annotated_type!r}'; has ({len(val)}).",
+                                          f"elements to be parsed as a '{elem.annotated_type!r}'; has ({len(val)}).",
                                **kwargs)
 
     @classmethod
@@ -602,12 +586,11 @@ class ModelType_Tuple(ModelType_List):
         if len(val) == len(elem.generics):
             return [g.dump_value(x) for x, g in zip(val, elem.generics)]
         raise cls._parse_error(val, elem, f"has the wrong number of "
-                                   f"elements to be dumped as a '{elem.annotated_type!r}'; has ({len(val)}).",
+                                          f"elements to be dumped as a '{elem.annotated_type!r}'; has ({len(val)}).",
                                **kwargs)
 
 
 class ModelType_Dict(ModelType):
-
 
     @classmethod
     def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
@@ -618,7 +601,7 @@ class ModelType_Dict(ModelType):
     def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
         return (isinstance(val, Mapping) and
                 (len(elem.generics) == 0 or all(elem.generics[0].is_valid(k) and elem.generics[1].is_valid(v)
-                                           for k, v in val.items())))
+                                                for k, v in val.items())))
 
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
@@ -673,7 +656,7 @@ class ModelType_Type(ModelType_Object):
                                            f"type is not found.")
         if not inspect.isclass(val):
             raise cls._parse_error(val, elem, f"could not be "
-                                       f"interpreted as a type; is it an instance?", **kwargs)
+                                              f"interpreted as a type; is it an instance?", **kwargs)
         return val
 
     @classmethod
@@ -712,7 +695,6 @@ class ModelType_Basic(ModelType_Concrete):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs)
-
 
 
 class ModelType_Pattern(ModelType_Concrete):
@@ -817,7 +799,7 @@ class ModelType_TimeDelta(ModelType_Concrete):
         raise cls._parse_error(val, elem, "into a timedelta.", **kwargs)
 
     @classmethod
-    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) ->JSONType:
+    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return int(cls._parse_for_dump(val, elem, **kwargs).total_seconds() * 1000)
 
 

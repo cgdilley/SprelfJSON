@@ -11,11 +11,15 @@ handling a variety of data types and supporting nested and polymorphic JSON stru
 - Automatic dumping of Python objects into JSON-compatible dictionaries.
 - Support for standard Python types (`string`, `int`, `float`, `bool`, `list`, `dict`, etc.).
 - Handling of additional types like `datetime`, `date`, `time`, `timedelta`, `bytes`, `re.Pattern`, `Enum`,`IntEnum`, `StrEnum`, and `IntFlag`.
-- Flexibility to add support for additional data types by subclassing `ModelType`
+- Flexibility to add support for additional data types by subclassing `ModelType`.
 - Seamless handling of nested `JSONModel` objects.
 - Dynamic parsing of `JSONModel` subclasses based on a designated field.
 - Ability to define alternate parsing and dumping logic.
 - Clear error reporting for validation and parsing issues.
+
+## Installation
+
+`pip install sprelf-json`
 
 ## Basic Usage
 Define a simple JSON structure:
@@ -419,10 +423,14 @@ There are some class-level options in `JSONModel` to define certain types of beh
 - `__allow_null_json_output__: bool`: When dumping, whether to include the name field in the output.  Defaults as `True`
 - `__allow_null_json_output__: bool`: When dumping, whether to allow null JSON values.  Defaults as `False`
 - `__include_defaults_in_json_output__: bool`: When dumping, whether to include fields whose values are equal to the default value.  Defaults as `False`.
-- `__allow_extra_fields__: bool`: When parsing, whether to raise an error if there are extra fields that don't belong to the model.  If `True`, then they are simply ignored.  Defaults as `False`
+- `__allow_extra_fields__: bool`: When parsing, whether to ignore extra fields that don't belong to the model.  If `False`, then an error is raised if extra fields are found.  Defaults as `False`
 - `__exclusions__: list[str]`: A list of fields that are defined, but should be ignored for the purposes of parsing/dumping.
 - `__eval_context__: dict[str, ...]`: A map of modules and classes to include when evaluating the annotations (which are read as strings) into actual types.
 
 There are additional class-level options in `ModelElem`:
  - `__base64_altchars__: tuple[bytes, ...]`: A list of 2-character byte strings that define the allowable base64 alternate characters when parsing a string to `bytes`.
 The parser will try each one in order until one succeeds.  The dumper will always use the first byte string here.  By default, is defined as `(b"-_", b"+/")`, preferring URL-safe altchars.
+
+## Known issues
+
+ - When subclassing a `JSONModel` subclass that has a default value in a field, IDEs may provide a warning related to "non-default arguments following default arguments". When actually running the code, there is no issue here, so it's safe to ignore or suppress such warnings.

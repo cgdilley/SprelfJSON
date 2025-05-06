@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sprelf-json-test"
+name = "sprelf-json"
 version = "2025.05.05.0"
 authors = [
     { name = "Christopher Dilley", email = "christopher@cabuu.de" }

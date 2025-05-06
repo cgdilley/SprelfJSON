@@ -262,7 +262,7 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
             else:
                 val = values.pop(k)
             try:
-                val = m.validate(val)
+                val = m.validate(val, key=k)
             except ModelElemError as e:
                 raise JSONModelError(f"Model error on key '{k}' of '{cls.__name__}': {str(e)}")
 
