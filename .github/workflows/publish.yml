@@ -37,8 +37,8 @@ jobs:
       - build
     runs-on: ubuntu-latest
     environment:
-      name: testpypi
-      url: https://test.pypi.org/p/sprelf-json-test
+      name: pypi
+      url: https://pypi.org/p/sprelf-json
     permissions:
       id-token: write
     steps:
@@ -50,7 +50,7 @@ jobs:
       - name: Publish distribution
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          repository-url: https://test.pypi.org/legacy/
+          repository-url: https://pypi.org/legacy/
 
   github-release:
     name: >-
