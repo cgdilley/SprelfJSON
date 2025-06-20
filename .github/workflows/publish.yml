@@ -1,4 +1,4 @@
-name: Publish distribution to TestPyPI
+name: Publish distribution to PyPI
 on:
   push:
     branches:
@@ -50,7 +50,7 @@ jobs:
       - name: Publish distribution
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          repository-url: https://pypi.org/legacy/
+          repository-url: https://upload.pypi.org/legacy/
 
   github-release:
     name: >-
