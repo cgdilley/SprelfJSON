@@ -51,8 +51,8 @@ class _BaseModelElem(ABC):
     _AliasedModelTypes: list[type[ModelType]] = None
     _ConcreteModelTypes: list[type[ModelType]] = None
 
-    def __init__(self, typ: type[T]):
-        t, gen = type(self)._validate_definition(typ)
+    def __init__(self, typ: type[T], _embedded: bool = False):
+        t, gen = type(self)._validate_definition(typ, embedded=_embedded)
         self.origin: type[T] = t
         self.generics: tuple[_BaseModelElem, ...] = gen
         self._model_type: type[ModelType] | None = None
@@ -66,6 +66,9 @@ class _BaseModelElem(ABC):
     def is_generic(self) -> bool:
         return len(self.generics) > 0
 
+    def is_union(self) -> bool:
+        return self.origin == Union or typing_inspect.is_union_type(self.origin)
+
     @property
     def T(self) -> type[T]:
         return self.origin
@@ -73,6 +76,13 @@ class _BaseModelElem(ABC):
     @property
     def annotated_type(self) -> type[T]:
         return ClassHelpers.as_generic(self.origin, *(g.annotated_type for g in self.generics))
+
+    @property
+    def annotation(self) -> str:
+        if self.is_union():
+            return "|".join(g.annotation for g in self.generics)
+        suffix = "" if len(self.generics) == 0 else f"[{','.join(g.annotation for g in self.generics)}]"
+        return f"{self.origin.__name__}{suffix}"
 
     def is_valid(self, value: Any, *, key: str | None = None, **kwargs) -> bool:
         try:
@@ -98,7 +108,7 @@ class _BaseModelElem(ABC):
         else:
             t_str = type(value).__name__
 
-        raise ModelElemError(self, f"Schema mismatch: Expected type '{self.annotated_type!r}', "
+        raise ModelElemError(self, f"Schema mismatch: Expected type '{self.annotation}', "
                                    f"but got '{t_str}' instead")
 
     def _is_valid(self, val: T, **kwargs) -> bool:
@@ -147,7 +157,7 @@ class _BaseModelElem(ABC):
         Parses the given value to conform with the type defined by this model element, if possible.
         If unsuccessful, a ModelElemError is raised.
         """
-        return self._parse_value(val)
+        return self._parse_value(val, **kwargs)
 
     def _parse_value(self, val: Any, **kwargs) -> T:
         mt = self.get_matching_model_type(**kwargs)
@@ -174,10 +184,11 @@ class _BaseModelElem(ABC):
     #
 
     @classmethod
-    def _validate_definition(cls, val_type: type) -> tuple[type, tuple[_BaseModelElem, ...]]:
+    def _validate_definition(cls, val_type: type, embedded: bool = False) -> tuple[type, tuple[_BaseModelElem, ...]]:
         t, gen = ClassHelpers.analyze_type(val_type)
-        if t is None or (inspect.isclass(t) and all(not inspect.isclass(supported) or not issubclass(t, supported)
-                                                    for supported in SupportedTypes)):
+        if t is None or (inspect.isclass(t) and not embedded and
+                         all(not inspect.isclass(supported) or not issubclass(t, supported)
+                             for supported in SupportedTypes)):
             raise JSONModelError(f"Cannot define ModelElem with unsupported type '{t.__name__}'.")
         if len(gen) == 0:
             return t, ()
@@ -185,7 +196,7 @@ class _BaseModelElem(ABC):
         if inspect.isclass(t) and issubclass(t, dict) and len(gen) != 2:
             raise JSONModelError(f"Invalid dict definition for ModelElem: [{','.join(g.__name__ for g in gen)}]")
 
-        return t, tuple(_BaseModelElem(arg) for arg in gen)
+        return t, tuple(_BaseModelElem(arg, _embedded=True) for arg in gen)
 
 
 #
@@ -349,7 +360,8 @@ class ModelType(ABC):
     @classmethod
     def _parse_error(cls, val: Any, elem: _BaseModelElem, message: str, **kwargs):
         k_str = f" on key '{k}'" if (k := kwargs.pop("key", None)) else ""
-        return ModelElemError(elem, f"Unable to parse value of type '{type(val).__name__}'{k_str} " + message)
+        return ModelElemError(elem, f"Unable to parse value of type '{type(val).__name__}'{k_str} as "
+                                    f"type '{elem.annotation}'" + (message or "."))
 
     @classmethod
     def _dump_error(cls, val: Any, elem: _BaseModelElem, message: str, **kwargs) -> ModelElemError:
@@ -456,7 +468,7 @@ class ModelType_Generator(ModelType):
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
         if not isinstance(val, Iterable):
-            raise cls._parse_error(val, elem, f"is not iterable.")
+            raise cls._parse_error(val, elem, f"; value is not iterable.")
         if len(elem.generics) > 0:
             return (elem.generics[0].dump_value(v) for v in val)  # Stays lazy
         return val
@@ -485,7 +497,7 @@ class ModelType_Sequence(ModelType_Generator):
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
         if not isinstance(val, Iterable):
-            raise cls._parse_error(val, elem, f"is not iterable.")
+            raise cls._parse_error(val, elem, f"; value is not an iterable.")
         if len(elem.generics) > 0:
             val = (elem.generics[0].parse_value(v) for v in val)
         if elem.origin in (Sequence, Collection, MutableSequence):
@@ -519,16 +531,16 @@ class ModelType_List(ModelType_Object):
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
         if not isinstance(val, Iterable):
-            raise cls._parse_error(val, elem, f"as a list; object is not iterable.")
+            raise cls._parse_error(val, elem, f"; object is not iterable.", **kwargs)
         if len(elem.generics) > 0:
-            return cls.t(elem.generics[0].parse_value(v) for v in val)
+            return cls.t(elem.generics[0].parse_value(v, **kwargs) for v in val)
         return cls.t(val)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         if not isinstance(parsed, Iterable):
-            raise cls._dump_error(val, elem, f"is not iterable; "
+            raise cls._dump_error(val, elem, f"as an iterable; "
                                              f"cannot dump as a JSON array.", **kwargs)
         if len(elem.generics) > 0:
             return [elem.generics[0].dump_value(v) for v in parsed]
@@ -561,14 +573,14 @@ class ModelType_Tuple(ModelType_List):
     @classmethod
     def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
         if not isinstance(val, Collection):
-            raise cls._parse_error(val, elem, f"is not a collection; cannot parse as a tuple.", **kwargs)
+            raise cls._parse_error(val, elem, f"; value is not a collection.", **kwargs)
         if len(elem.generics) == 2 and elem.generics[1].origin is Ellipsis:
             return cls.t(elem.generics[0].parse_value(v) for v in val)
         elif len(elem.generics) == 0:
             return cls.t(val)
         elif len(elem.generics) == len(val):
             return cls.t(g.parse_value(v) for g, v in zip(elem.generics, val))
-        raise cls._parse_error(val, elem, f"has the wrong number of "
+        raise cls._parse_error(val, elem, f"; has the wrong number of "
                                           f"elements to be parsed as a '{elem.annotated_type!r}'; has ({len(val)}).",
                                **kwargs)
 
@@ -585,7 +597,7 @@ class ModelType_Tuple(ModelType_List):
             return list(parsed)
         if len(val) == len(elem.generics):
             return [g.dump_value(x) for x, g in zip(val, elem.generics)]
-        raise cls._parse_error(val, elem, f"has the wrong number of "
+        raise cls._parse_error(val, elem, f"; has the wrong number of "
                                           f"elements to be dumped as a '{elem.annotated_type!r}'; has ({len(val)}).",
                                **kwargs)
 
@@ -610,6 +622,8 @@ class ModelType_Dict(ModelType):
         else:
             d = val
         if isinstance(d, Mapping):
+            if len(elem.generics) == 0:
+                return d
             if all(isinstance(k, str) for k in d.keys()):
                 if elem.generics[0].origin == str:
                     return {k: elem.generics[1].parse_value(v) for k, v in d.items()}
@@ -618,7 +632,7 @@ class ModelType_Dict(ModelType):
             else:
                 return {elem.generics[0].parse_value(k): elem.generics[1].parse_value(v)
                         for k, v in d.items()}
-        raise cls._parse_error(val, elem, f"could not be parsed as a dictionary.", **kwargs)
+        raise cls._parse_error(val, elem, f"", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -633,6 +647,7 @@ class ModelType_Dict(ModelType):
 
 class ModelType_Type(ModelType_Object):
     t = type
+    __output_full_class_name__: bool = True
 
     @classmethod
     def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
@@ -654,15 +669,16 @@ class ModelType_Type(ModelType_Object):
             if t is None:
                 raise ModelElemError(elem, f"Unable to parse string value '{val}' as a type; "
                                            f"type is not found.")
+            val = t
         if not inspect.isclass(val):
-            raise cls._parse_error(val, elem, f"could not be "
-                                              f"interpreted as a type; is it an instance?", **kwargs)
+            raise cls._parse_error(val, elem, f"; could not be "
+                                              f"interpreted as a type.  Is it an instance?", **kwargs)
         return val
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         parsed = cls._parse_for_dump(val, elem, **kwargs)
-        return None if parsed is None else ClassHelpers.full_name(parsed)
+        return None if parsed is None else ClassHelpers.full_name(parsed) if cls.__output_full_class_name__ else parsed.__name__
 
 
 class ModelType_Concrete(ModelType_Object, ABC):
@@ -690,7 +706,7 @@ class ModelType_Basic(ModelType_Concrete):
     def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
         if issubclass(elem.origin, float) and isinstance(val, int):
             return float(val)
-        raise cls._parse_error(val, elem, "as one of the basic types.", **kwargs)
+        raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -710,7 +726,7 @@ class ModelType_Pattern(ModelType_Concrete):
                 return re.compile(val)
             except:
                 raise ModelElemError(elem, f"Unable to compile string as a regular expression.")
-        raise cls._parse_error(val, elem, f"as a regular expression.", **kwargs)
+        raise cls._parse_error(val, elem, f"", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -730,7 +746,7 @@ class ModelType_DateTime(ModelType_Concrete):
         try:
             return TimeHelpers.parse_datetime(val)
         except ValueError:
-            raise cls._parse_error(val, elem, "into a datetime.", **kwargs)
+            raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -749,7 +765,7 @@ class ModelType_Date(ModelType_Concrete):
         try:
             return TimeHelpers.parse_date(val)
         except ValueError:
-            raise cls._parse_error(val, elem, "into a date.", **kwargs)
+            raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -768,7 +784,7 @@ class ModelType_Time(ModelType_Concrete):
         try:
             return TimeHelpers.parse_time(val)
         except ValueError:
-            raise cls._parse_error(val, elem, "into a time.", **kwargs)
+            raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -796,7 +812,7 @@ class ModelType_TimeDelta(ModelType_Concrete):
             return timedelta(seconds=val / 1000)
         elif isinstance(val, float):
             return timedelta(seconds=val)
-        raise cls._parse_error(val, elem, "into a timedelta.", **kwargs)
+        raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -813,7 +829,7 @@ class ModelType_IntFlag(ModelType_Concrete):
                 return elem.origin(val)
             except ValueError as e:
                 raise ModelElemError(elem, f"Unable to parse IntFlag: {e}")
-        raise cls._parse_error(val, elem, "into an IntFlag.", **kwargs)
+        raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -838,7 +854,7 @@ class ModelType_IntEnum(ModelType_Concrete):
                 raise ModelElemError(elem, f"Unable to parse IntEnum from string; "
                                            f"Unrecognized IntEnum value ({val}) for '{type(elem.origin).__name__}'.")
 
-        raise cls._parse_error(val, elem, "into an IntEnum.", **kwargs)
+        raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -856,7 +872,7 @@ class ModelType_StrEnum(ModelType_Concrete):
             except ValueError:
                 raise ModelElemError(elem, f"Unable to parse StrEnum; "
                                            f"Unrecognized StrEnum value ({val}) for '{type(elem.origin).__name__}")
-        raise cls._parse_error(val, elem, "into a StrEnum.", **kwargs)
+        raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -881,7 +897,7 @@ class ModelType_Enum(ModelType_Concrete):
         try:
             return elem.origin(val)
         except ValueError:
-            raise cls._parse_error(val, elem, "into an Enum.", **kwargs)
+            raise cls._parse_error(val, elem, "", **kwargs)
 
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
@@ -894,10 +910,13 @@ class ModelType_JSON(ModelType_Concrete):
     @classmethod
     def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
         if isinstance(val, str):
-            return elem.origin.from_json(json.loads(val))
+            try:
+                return elem.origin.from_json(json.loads(val))
+            except json.JSONDecodeError as e:
+                raise cls._parse_error(val, elem, f"; failed to parse JSON from string: {str(e)}", **kwargs)
         if ClassHelpers.check_generic_instance(val, dict, str, Any):
             return elem.origin.from_json(val)
-        raise cls._parse_error(val, elem, f"into a JSON convertible object '{elem.origin.__name__}'.",
+        raise cls._parse_error(val, elem, f"",
                                **kwargs)
 
     @classmethod
