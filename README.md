@@ -419,8 +419,8 @@ except JSONModelError as e:
 There are some class-level options in `JSONModel` to define certain types of behavior by the class it's applied to and all subclasses.
 
 - `__name_field__: str`: When parsing, the name of the JSON field that stores the name of the `JSONModel` object to dynamically parse.  Defaults as `"__name"`
-- `__name_field_required__: bool`: When parsing, will reject any JSON objects that do not have the name field defined.  Defaults as `True`
-- `__allow_null_json_output__: bool`: When dumping, whether to include the name field in the output.  Defaults as `True`
+- `__name_field_required__: bool`: When parsing, will reject any JSON objects that do not have the name field defined.  Defaults as `False`
+- `__include_name_in_json_output__: bool`: When dumping, whether to include the name field in the output.  Defaults as `False`
 - `__allow_null_json_output__: bool`: When dumping, whether to allow null JSON values.  Defaults as `False`
 - `__include_defaults_in_json_output__: bool`: When dumping, whether to include fields whose values are equal to the default value.  Defaults as `False`.
 - `__allow_extra_fields__: bool`: When parsing, whether to ignore extra fields that don't belong to the model.  If `False`, then an error is raised if extra fields are found.  Defaults as `False`
