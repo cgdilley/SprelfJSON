@@ -187,7 +187,7 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         """
         Parses the given JSON into an object of this type (or a subclass)
         """
-        copy = {k: v for k, v in o.items()}
+        copy = {**o}
         subclass = cls._extract_subclass(copy)
         return subclass(**copy, **kwargs)
 
@@ -198,7 +198,7 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         model = self.model()
         dumped = {k: elem.dump_value(getattr(self, k), key=k)
                   for k, elem in model.items()
-                  if not elem.ignored}
+                  if not elem.ignored and not elem.ephemeral}
 
         if not type(self).__include_defaults_in_json_output__:
             dumped = {k: v for k, v in dumped.items()
