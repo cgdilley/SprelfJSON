@@ -26,8 +26,8 @@ class JSONModelMeta(ABCMeta):
     _DEFAULTS = "__defaults__"
     __json_model__: dict[str, ModelElem]
     __name_field__: str = "__name"
-    __name_field_required__: bool = True
-    __include_name_in_json_output__: bool = True
+    __name_field_required__: bool = False
+    __include_name_in_json_output__: bool = False
     __allow_null_json_output__: bool = False
     __include_defaults_in_json_output__: bool = False
     __allow_extra_fields__: bool = False
@@ -40,13 +40,17 @@ class JSONModelMeta(ABCMeta):
 
     @classmethod
     def _eval(cls, s: Any, context: dict):
-        if inspect.isclass(s) or typing_inspect.is_generic_type(s) or typing_inspect.is_union_type(s) or \
+        if s is None or inspect.isclass(s) or typing_inspect.is_generic_type(s) or typing_inspect.is_union_type(s) or \
                 typing_inspect.is_optional_type(s) or isinstance(s, ModelElem) or type(s) == GenericAlias:
             return s
         try:
             return eval(s, context)
         except:
-            return ClassHelpers.locate_class(s)
+            if c := ClassHelpers.locate_class(s):
+                return c
+            raise JSONModelError(f"Unable to evaluate '{s}' as a type; has it been instantiated yet?  Be sure "
+                                 f"nested classes are defined before the classes they're nested in, and "
+                                 f"avoid circular references.")
 
     #
 
@@ -82,6 +86,9 @@ class JSONModelMeta(ABCMeta):
             if hasattr(base, mcls._ANNO):
                 given_anno.update(base.__annotations__)
                 defaults.update(getattr(base, mcls._DEFAULTS, {}))
+            if base == ABC:
+                namespace["__name_field_required__"] = True
+                namespace["__include_name_in_json_output__"] = True
 
         given_anno.update(namespace.get(mcls._ANNO, {}))
 
@@ -96,34 +103,49 @@ class JSONModelMeta(ABCMeta):
                 defaults[field] = getattr(mcls, field)
 
         #
+        # Fill in the namespace and build
+        #
+        namespace = {
+            **namespace,
+            mcls._DEFAULTS: defaults
+        }
+
+        new_cls = BUILD(name, bases, namespace)
+
+        #
         # Parse the annotated strings to get actual types to enforce
         #
         eval_context = {**JSONModelMeta.__eval_context__,
                         **locals(),
+                        **{k: v for frame in reversed(inspect.stack()) for k, v in frame.frame.f_locals.items()},
+                        new_cls.__name__: new_cls,
                         **{sc.__name__: sc for sc in ClassHelpers.all_subclasses(JSONModel)}}
 
         evaluated_anno = {k: mcls._eval(v, eval_context)
-                     for k, v in given_anno.items()}
+                          for k, v in given_anno.items()}
+
+        def _build_model_elem(k, v):
+            if isinstance(v, ModelElem):
+                return v
+            d = defaults.get(k, ())
+            _orig, _gener = ClassHelpers.analyze_type(v)
+            if any(isinstance(_orig, x) for x in (list, dict, set)):
+                if len(d) == 0:
+                    return ModelElem(v, default_factory=_orig)
+                else:
+                    return ModelElem(v, default_factory=lambda: _orig(d))
+            return ModelElem(v, default=d)
+
         full_anno: dict[str, ModelElem] = \
-            {k: v if isinstance(v, ModelElem) else ModelElem(v, default=defaults.get(k, ()))
+            {k: _build_model_elem(k, v)
              for k, v in evaluated_anno.items()}
         clean_anno = {k: v.annotated_type for k, v in full_anno.items()}
         required = [n for n in full_anno.keys() if n not in defaults]
-
-        #
-        # Fill in the final namespace and build
-        #
-        namespace = {
-            **namespace,
-            mcls._DEFAULTS: defaults,
-            "__slots__": required,
-            mcls._FIELDS: tuple(given_anno.keys()),
-            mcls._ANNO: given_anno,
-            "__resolved_anno__": clean_anno,
-            mcls._JSON_MODEL: full_anno
-        }
-
-        new_cls = BUILD(name, bases, namespace)
+        setattr(new_cls, mcls._FIELDS, tuple(given_anno.keys()))
+        setattr(new_cls, mcls._ANNO, given_anno)
+        setattr(new_cls, mcls._JSON_MODEL, full_anno)
+        setattr(new_cls, "__resolved_anno__", clean_anno)
+        setattr(new_cls, "__slots__", required)
 
         return new_cls
 
@@ -139,8 +161,9 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
 
     def __init__(self, **kwargs):
         model = type(self).model()
+        ignore_extra = kwargs.pop("_ignore_extra", type(self).__allow_extra_fields__)
         validated = type(self).validate_model(model=model, values=kwargs,
-                                              ignore_extra=kwargs.get("ignore_extra", type(self).__allow_extra_fields__))
+                                              ignore_extra=ignore_extra)
         for k, v in validated.items():
             setattr(self, k, v)
 
@@ -164,10 +187,9 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         """
         Parses the given JSON into an object of this type (or a subclass)
         """
-        copy = {k: v for k, v in o.items()}
+        copy = {**o}
         subclass = cls._extract_subclass(copy)
         return subclass(**copy, **kwargs)
-
 
     def to_json(self, **kwargs) -> JSONObject:
         """
@@ -176,7 +198,8 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         model = self.model()
         dumped = {k: elem.dump_value(getattr(self, k), key=k)
                   for k, elem in model.items()
-                  if not elem.ignored}
+                  if not elem.ignored and not elem.ephemeral}
+
         if not type(self).__include_defaults_in_json_output__:
             dumped = {k: v for k, v in dumped.items()
                       if not model[k].has_default() or v != model[k].default}

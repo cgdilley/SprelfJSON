@@ -13,11 +13,13 @@ TIMEDELTA_REGEX = re.compile('^(days=(?P<d>\d+),)?(hours=(?P<h>\d+),)?(minutes=(
 
 
 def stringify_datetime(d: datetime) -> str:
-    iso = d.strftime(DATETIME_FORMAT)
-    decimal_pos = iso.rfind(".")
-    seconds_fraction = iso[decimal_pos + 1:-1]
-    millis = seconds_fraction.rjust(3, "0")[:3]
-    return iso[:decimal_pos + 1] + millis + "Z"
+    base = d.strftime(DATETIME_FORMAT2)
+    millis = f"{round(d.microsecond / 1000):03d}"
+    base = f"{base}.{millis}"
+    if d.tzinfo is None or d.tzinfo == timezone.utc:
+        return base + "Z"
+    else:
+        return base + d.strftime("%z")
 
 def stringify_time(d: time) -> str:
     iso = d.strftime(TIME_FORMAT)
@@ -32,34 +34,42 @@ def stringify_date(d: date):
 
 def parse_datetime_string(s: str) -> datetime:
     try:
-        return datetime.strptime(s, DATETIME_FORMAT)
+        dt = datetime.fromisoformat(s.strip("Z"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     except ValueError:
-        return datetime.strptime(s, DATETIME_FORMAT2)
+        try:
+            return datetime.strptime(s, DATETIME_FORMAT).replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.strptime(s, DATETIME_FORMAT2).replace(tzinfo=timezone.utc)
 
 
 def parse_datetime(d: datetime | date | time | str | float | int) -> datetime:
     if isinstance(d, datetime):
-        return d
+        return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
     if isinstance(d, str):
         return parse_datetime_string(d)
     if isinstance(d, int) or isinstance(d, float):
         return datetime.fromtimestamp(d, tz=timezone.utc)
     if isinstance(d, date):
-        return datetime(year=d.year, month=d.month, day=d.day)
+        return datetime(year=d.year, month=d.month, day=d.day, tzinfo=timezone.utc)
     if isinstance(d, time):
         return datetime(year=datetime.min.year,
                         month=datetime.min.month,
                         day=datetime.min.day,
                         hour=d.hour, minute=d.minute,
-                        second=d.second, microsecond=d.microsecond)
+                        second=d.second, microsecond=d.microsecond,
+                        tzinfo=timezone.utc)
     raise ValueError(f"Unable to smart-parse value as datetime: {d}")
 
 
 def parse_date_string(s: str) -> date:
     try:
-        return datetime.strptime(s, DATE_FORMAT).date()
+        return datetime.fromisoformat(s.strip("Z")).date()
     except ValueError:
-        return parse_datetime_string(s).date()
+        try:
+            return datetime.strptime(s, DATE_FORMAT).date()
+        except ValueError:
+            return parse_datetime_string(s).date()
 
 
 def parse_date(d: datetime | date | str | float | int) -> date:
@@ -76,9 +86,12 @@ def parse_date(d: datetime | date | str | float | int) -> date:
 
 def parse_time_string(s: str) -> time:
     try:
-        return datetime.strptime(s, TIME_FORMAT).time()
+        return datetime.fromisoformat(s.strip("Z")).time()
     except ValueError:
-        return datetime.strptime(s, TIME_FORMAT2).time()
+        try:
+            return datetime.strptime(s, TIME_FORMAT).time()
+        except ValueError:
+            return datetime.strptime(s, TIME_FORMAT2).time()
 
 
 def parse_time(t: datetime | time | str | float | int) -> time:

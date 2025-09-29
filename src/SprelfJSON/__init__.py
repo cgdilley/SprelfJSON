@@ -3,3 +3,4 @@ from SprelfJSON.JSONDefinitions import JSONType, JSONObject, JSONValue, JSONArra
 from SprelfJSON.JSONUtils import get as json_get
 from SprelfJSON.JSONModel import *
 from SprelfJSON.Helpers import *
+from SprelfJSON.Objects import *
