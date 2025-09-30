@@ -68,17 +68,16 @@ jobs:
       id-token: write
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # Fetch all history for git tag checks
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - name: Install toml parser
         run: pip install toml
-      - name: Download all the dists
-        uses: actions/download-artifact@v4
-        with:
-          name: python-package-distributions
-          path: dist/
       - name: Debug - Show current directory and contents
         run: |
           echo "Current working directory (shell): $(pwd)"
@@ -89,6 +88,11 @@ jobs:
         run: |
           VERSION=$(python -c "import toml; print(toml.load('./pyproject.toml')['project']['version'])")
           echo "tag_name=v$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Download all the dists
+        uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
       - name: Check if tag already exists
         id: check_tag_existence
         run: |
