@@ -80,7 +80,7 @@ jobs:
       - name: Extract version from pyproject.toml
         id: get_version
         run: |
-          VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          VERSION=$(python -c "import toml; print(toml.load('./pyproject.toml')['project']['version'])")
           echo "tag_name=v$VERSION" >> "$GITHUB_OUTPUT"
       - name: Check if tag already exists
         id: check_tag_existence
