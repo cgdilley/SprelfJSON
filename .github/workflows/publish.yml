@@ -78,11 +78,6 @@ jobs:
           python-version: "3.11"
       - name: Install toml parser
         run: pip install toml
-      - name: Debug - Show current directory and contents
-        run: |
-          echo "Current working directory (shell): $(pwd)"
-          echo "Contents of current directory:"
-          ls -F
       - name: Extract version from pyproject.toml
         id: get_version
         run: |
