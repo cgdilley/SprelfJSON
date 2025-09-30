@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sprelf-json"
-version = "2025.09.27.0"
+version = "2025.09.30.0"
 authors = [
     { name = "Christopher Dilley", email = "christopher@cabuu.de" }
 ]
@@ -18,14 +18,13 @@ classifiers = [
 dependencies = [
     "typing-inspect"
 ]
+license = "GPL-3.0-or-later"
+license-files = ["LICEN[SC]E.*"]
 
 [project.optional-dependencies]
 yaml = [
     "ruamel.yaml",
 ]
-
-license = "GPL-3.0-or-later"
-license-files = ["LICEN[SC]E.*"]
 
 [project.urls]
 repository = "https://github.com/cgdilley/SprelfJSON"
