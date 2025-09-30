@@ -79,6 +79,11 @@ jobs:
         with:
           name: python-package-distributions
           path: dist/
+      - name: Debug - Show current directory and contents
+        run: |
+          echo "Current working directory (shell): $(pwd)"
+          echo "Contents of current directory:"
+          ls -F
       - name: Extract version from pyproject.toml
         id: get_version
         run: |
