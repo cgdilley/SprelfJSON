@@ -63,29 +63,68 @@ jobs:
       id-token: write
 
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install toml parser
+        run: pip install toml
       - name: Download all the dists
         uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
+      - name: Extract version from pyproject.toml
+        id: get_version
+        run: |
+          VERSION=$(python -c "import toml; print(toml.load('pyproject.toml')['project']['version'])")
+          echo "tag_name=v$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Check if tag already exists
+        id: check_tag_existence
+        run: |
+          TAG_NAME="${{ steps.get_version.outputs.tag_name }}"
+          if git ls-remote --tags origin "$TAG_NAME" | grep -q "$TAG_NAME"; then
+            echo "Tag $TAG_NAME already exists. Skipping release process."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag $TAG_NAME does not exist. Proceeding with release."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Configure Git and Create Tag
+        if: steps.check_tag_existence.outputs.should_release == 'true'
+        run: |
+          TAG_NAME="${{ steps.get_version.outputs.tag_name }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG_NAME" -m "Release $TAG_NAME" # Create annotated tag
+          git push origin "$TAG_NAME" # Push the new tag to GitHub
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Sign with Sigstore
+        if: steps.check_tag_existence.outputs.should_release == 'true'
         uses: sigstore/gh-action-sigstore-python@v3.0.0
         with:
           inputs: >-
             ./dist/*.tar.gz
             ./dist/*.whl
       - name: Create GitHub release
+        if: steps.check_tag_existence.outputs.should_release == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           gh release create
-          "$GITHUB_REF_NAME"
+          "${{ steps.get_version.outputs.tag_name }}"
           --repo "$GITHUB_REPOSITORY"
           --notes ""
+          --target "${{ github.sha }}" # Ensure release points to the commit that triggered the workflow
       - name: Upload artifact signatures to GitHub Release
+        if: steps.check_tag_existence.outputs.should_release == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           gh release upload
-          "$GITHUB_REF_NAME" dist/**
+          "${{ steps.get_version.outputs.tag_name }}" dist/**
           --repo "$GITHUB_REPOSITORY"
