@@ -3,5 +3,5 @@
 build/*
 *.env
 dist/*
-/src/sprelf_json.egg-info/
+src/sprelf_json.egg-info/
 *.zip

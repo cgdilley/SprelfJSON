@@ -18,6 +18,12 @@ classifiers = [
 dependencies = [
     "typing-inspect"
 ]
+
+[project.optional-dependencies]
+yaml = [
+    "ruamel.yaml",
+]
+
 license = "GPL-3.0-or-later"
 license-files = ["LICEN[SC]E.*"]
 
