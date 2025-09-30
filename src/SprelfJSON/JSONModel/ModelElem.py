@@ -8,6 +8,7 @@ from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 from SprelfJSON.Objects import Ephemeral
 
 from typing import Any, TypeVar, Callable, Union
+import typing
 from collections.abc import Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection, \
     Iterator, Iterable, Generator, Set
 import typing_inspect
@@ -15,6 +16,7 @@ import inspect
 import base64
 import json
 import re
+import builtins
 from abc import ABC, abstractmethod
 
 from datetime import datetime, date, time, timedelta
@@ -53,8 +55,8 @@ class _BaseModelElem:
     _AliasedModelTypes: list[type[ModelType]] = None
     _ConcreteModelTypes: list[type[ModelType]] = None
 
-    def __init__(self, typ: type[T], _ephemeral: bool = False):
-        t, gen = type(self)._validate_definition(typ, _ephemeral)
+    def __init__(self, typ: type[T], _ephemeral: bool = False, _type: bool = False):
+        t, gen = type(self)._validate_definition(typ, _ephemeral, _type)
         self.origin: type[T] = t
         self.generics: tuple[_BaseModelElem, ...] = gen
         self._model_type: type[ModelType] | None = None
@@ -186,14 +188,17 @@ class _BaseModelElem:
     #
 
     @classmethod
-    def _validate_definition(cls, val_type: type, _ephemeral: bool) -> tuple[type, tuple[_BaseModelElem, ...]]:
+    def _validate_definition(cls, val_type: type, _ephemeral: bool, _type: bool) -> tuple[type, tuple[_BaseModelElem, ...]]:
         t, gen = ClassHelpers.analyze_type(val_type)
-        if t is None or (inspect.isclass(t) and not _ephemeral and
+        if t is None or (inspect.isclass(t) and not _ephemeral and not _type and
                          all(not inspect.isclass(supported) or not issubclass(t, supported)
                              for supported in SupportedTypes)):
             raise JSONModelError(f"Cannot define ModelElem with unsupported type '{t.__name__}'.")
         if len(gen) == 0:
             return t, ()
+
+        if t == type:
+            return t, tuple(_BaseModelElem(arg, _type=True) for arg in gen)
 
         if inspect.isclass(t) and issubclass(t, dict) and len(gen) != 2:
             raise JSONModelError(f"Invalid dict definition for ModelElem: [{','.join(g.__name__ for g in gen)}]")
@@ -694,8 +699,12 @@ class ModelType_Type(ModelType_Object):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         parsed = cls._parse_for_dump(val, elem, **kwargs)
-        return None if parsed is None else ClassHelpers.full_name(
-            parsed) if cls.__output_full_class_name__ else parsed.__name__
+        if parsed is None:
+            return None
+        if any(parsed.__module__ == m for m in ("builtins", "datetime", "typing", "enum")) \
+                or not cls.__output_full_class_name__:
+            return parsed.__name__
+        return  ClassHelpers.full_name(parsed)
 
 
 class ModelType_Concrete(ModelType_Object, ABC):

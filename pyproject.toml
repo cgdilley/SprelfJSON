@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sprelf-json"
-version = "2025.09.30.2"
+version = "2025.09.30.3"
+# If we need to make a clear new major version, use eg. "2!2025.09.30.0"
 authors = [
     { name = "Christopher Dilley", email = "christopher@cabuu.de" }
 ]

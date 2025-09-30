@@ -117,6 +117,31 @@ class ModelWithIgnoredField(JSONModel):
     regular_field: str
     ignored_field: ModelElem(int, ignored=True)
 
+class CustomClassNotSupported:
+    def __init__(self, name: str):
+        self.name = name
+
+    def __eq__(self, other):
+        if isinstance(other, type(self)):
+            return self.name == other.name
+        return False
+
+    def __repr__(self):
+        return f"CustomClassNotSupported('{self.name}')"
+
+class CustomSubclassNotSupported(CustomClassNotSupported):
+    pass
+
+class ModelWithTypeGenerics(JSONModel):
+    # This should now be valid, even though CustomClassNotSupported is not in SupportedTypes
+    custom_type_field: type[CustomClassNotSupported]
+    builtin_type_field: type[int] # Ensure basic types still work
+
+class ModelWithTypeGenericsWithDefault(JSONModel):
+    custom_type_field_with_default: type[CustomClassNotSupported] = CustomClassNotSupported # Default to the class itself
+
+
+
 
 class TestJSONModel(unittest.TestCase):
 
@@ -681,6 +706,65 @@ class TestJSONModel(unittest.TestCase):
         with self.assertRaises(JSONModelError):
             ModelWithCustomDumpFailure.to_json(instance_to_dump_fail)
 
+    def test_type_generics_with_unsupported_type(self):
+        # Test parsing with a custom class that is not in SupportedTypes
+        json_data = {
+            "custom_type_field": "TestJSONModel2.CustomClassNotSupported",  # Using full path as a string
+            "builtin_type_field": "int"
+        }
+        model = ModelWithTypeGenerics.from_json(json_data)
+
+        self.assertEqual(model.custom_type_field, CustomClassNotSupported)
+        self.assertIsInstance(model.custom_type_field, type)
+        self.assertEqual(model.builtin_type_field, int)
+        self.assertIsInstance(model.builtin_type_field, type)
+
+        # Test dumping
+        dumped_json = model.to_json()
+        self.assertEqual(dumped_json["custom_type_field"], "TestJSONModel2.CustomClassNotSupported")
+        self.assertEqual(dumped_json["builtin_type_field"], "int")
+
+        # Test with direct class object
+        model_direct = ModelWithTypeGenerics(
+            custom_type_field=CustomClassNotSupported,
+            builtin_type_field=int
+        )
+        self.assertEqual(model_direct.custom_type_field, CustomClassNotSupported)
+        self.assertEqual(model_direct.builtin_type_field, int)
+        dumped_direct = model_direct.to_json()
+        self.assertEqual(dumped_direct["custom_type_field"], "TestJSONModel2.CustomClassNotSupported")
+        self.assertEqual(dumped_direct["builtin_type_field"], "int")
+
+    def test_type_generics_with_default(self):
+        # Test that the default for a type generic field works
+        model = ModelWithTypeGenericsWithDefault()
+        self.assertEqual(model.custom_type_field_with_default, CustomClassNotSupported)
+
+        # Test overriding the default
+        json_data = {
+            "custom_type_field_with_default": "TestJSONModel2.CustomSubclassNotSupported"
+        }
+        model_override = ModelWithTypeGenericsWithDefault.from_json(json_data)
+        self.assertEqual(model_override.custom_type_field_with_default, CustomSubclassNotSupported)
+
+    def test_type_generics_invalid_parsing(self):
+        # Test invalid string for type generic field
+        json_data = {
+            "custom_type_field": "NonExistentClass",
+            "builtin_type_field": "int"
+        }
+        with self.assertRaises(JSONModelError) as cm:
+            ModelWithTypeGenerics.from_json(json_data)
+        self.assertIn("Unable to parse string value 'NonExistentClass' as a type", str(cm.exception))
+
+        # Test providing non-class for type generic field
+        json_data_invalid_value = {
+            "custom_type_field": "TestJSONModel2.CustomClassNotSupported",
+            "builtin_type_field": 123  # should be a class or string representing one
+        }
+        with self.assertRaises(JSONModelError) as cm:
+            ModelWithTypeGenerics.from_json(json_data_invalid_value)
+        self.assertIn("could not be interpreted as a type", str(cm.exception))
 
 
 if __name__ == '__main__':
