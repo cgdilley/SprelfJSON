@@ -198,7 +198,10 @@ class _BaseModelElem:
         if inspect.isclass(t) and issubclass(t, dict) and len(gen) != 2:
             raise JSONModelError(f"Invalid dict definition for ModelElem: [{','.join(g.__name__ for g in gen)}]")
 
-        return t, tuple(_BaseModelElem(arg, _ephemeral=issubclass(t, Ephemeral)) for arg in gen)
+        if inspect.isclass(t) and issubclass(t, Ephemeral):
+            return t, tuple(_BaseModelElem(arg, _ephemeral=True) for arg in gen)
+
+        return t, tuple(_BaseModelElem(arg) for arg in gen)
 
 
 #
@@ -222,7 +225,7 @@ class ModelElem(_BaseModelElem):
                  ignored: bool = False):
         super().__init__(typ)
         self._ignored = ignored
-        self._is_ephemeral = issubclass(self.origin, Ephemeral)
+        self._is_ephemeral = inspect.isclass(self.origin) and issubclass(self.origin, Ephemeral)
         self._alternates = list(alternates)
         self._use_alternates_only = use_alternates_only
         if default_factory is not None:
