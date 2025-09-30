@@ -5,6 +5,7 @@ from types import UnionType, NoneType, GeneratorType
 from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType
 from SprelfJSON.Helpers import ClassHelpers, TimeHelpers
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
+from SprelfJSON.Objects import Ephemeral
 
 from typing import Any, TypeVar, Callable, Union
 from collections.abc import Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection, \
@@ -25,7 +26,8 @@ SupportedTypes = (dict, list, set, tuple, bool, str, int, float, bytes, type, No
                   Enum, StrEnum, IntEnum, IntFlag,
                   Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection,
                   Iterable, Iterator, Generator,
-                  JSONable, UnionType, NoneType)
+                  JSONable, UnionType, NoneType,
+                  Ephemeral)
 SupportedUnion = Union[SupportedTypes]
 SupportedTypeMap = {t.__name__: t for t in SupportedTypes if t is not None}
 T = Union[SupportedTypes[:-1]]
@@ -42,7 +44,7 @@ class ModelElemError(JSONModelError):
 #
 
 
-class _BaseModelElem(ABC):
+class _BaseModelElem:
     """
     Base definition for a ModelElem.  Contains all elements related to storing a particular
     type, and parsing/dumping values of that type.  Not intended to be used directly.
@@ -51,8 +53,8 @@ class _BaseModelElem(ABC):
     _AliasedModelTypes: list[type[ModelType]] = None
     _ConcreteModelTypes: list[type[ModelType]] = None
 
-    def __init__(self, typ: type[T], _embedded: bool = False):
-        t, gen = type(self)._validate_definition(typ, embedded=_embedded)
+    def __init__(self, typ: type[T], _ephemeral: bool = False):
+        t, gen = type(self)._validate_definition(typ, _ephemeral)
         self.origin: type[T] = t
         self.generics: tuple[_BaseModelElem, ...] = gen
         self._model_type: type[ModelType] | None = None
@@ -184,9 +186,9 @@ class _BaseModelElem(ABC):
     #
 
     @classmethod
-    def _validate_definition(cls, val_type: type, embedded: bool = False) -> tuple[type, tuple[_BaseModelElem, ...]]:
+    def _validate_definition(cls, val_type: type, _ephemeral: bool) -> tuple[type, tuple[_BaseModelElem, ...]]:
         t, gen = ClassHelpers.analyze_type(val_type)
-        if t is None or (inspect.isclass(t) and not embedded and
+        if t is None or (inspect.isclass(t) and not _ephemeral and
                          all(not inspect.isclass(supported) or not issubclass(t, supported)
                              for supported in SupportedTypes)):
             raise JSONModelError(f"Cannot define ModelElem with unsupported type '{t.__name__}'.")
@@ -196,7 +198,7 @@ class _BaseModelElem(ABC):
         if inspect.isclass(t) and issubclass(t, dict) and len(gen) != 2:
             raise JSONModelError(f"Invalid dict definition for ModelElem: [{','.join(g.__name__ for g in gen)}]")
 
-        return t, tuple(_BaseModelElem(arg, _embedded=True) for arg in gen)
+        return t, tuple(_BaseModelElem(arg, _ephemeral=issubclass(t, Ephemeral)) for arg in gen)
 
 
 #
@@ -220,11 +222,16 @@ class ModelElem(_BaseModelElem):
                  ignored: bool = False):
         super().__init__(typ)
         self._ignored = ignored
+        self._is_ephemeral = issubclass(self.origin, Ephemeral)
         self._alternates = list(alternates)
         self._use_alternates_only = use_alternates_only
         if default_factory is not None:
             self._default_factory = default_factory
             self._default = ()
+        elif self._is_ephemeral:
+            self._default_factory = None
+            self._default = (default.value,) if isinstance(default, Ephemeral) \
+                else (default,) if default != () else (None,)
         else:
             self._default_factory = None
             self._default: tuple[T | None] = \
@@ -251,6 +258,10 @@ class ModelElem(_BaseModelElem):
     @property
     def ignored(self) -> bool:
         return self._ignored
+
+    @property
+    def ephemeral(self) -> bool:
+        return self._is_ephemeral
 
     #
 
@@ -281,6 +292,8 @@ class ModelElem(_BaseModelElem):
     def dump_value(self, val: T, *, key: str | None = None, **kwargs) -> JSONType:
         if self.ignored:
             return None
+        if self.ephemeral:
+            raise ModelElemError(self, "Cannot dump ephemeral object.")
 
         if not self._use_alternates_only:
             try:
@@ -678,7 +691,8 @@ class ModelType_Type(ModelType_Object):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         parsed = cls._parse_for_dump(val, elem, **kwargs)
-        return None if parsed is None else ClassHelpers.full_name(parsed) if cls.__output_full_class_name__ else parsed.__name__
+        return None if parsed is None else ClassHelpers.full_name(
+            parsed) if cls.__output_full_class_name__ else parsed.__name__
 
 
 class ModelType_Concrete(ModelType_Object, ABC):
@@ -958,3 +972,35 @@ class ModelType_Bytes(ModelType_Concrete):
         alts = type(elem).__base64_altchars__
         alt = alts[0] if len(alts) > 0 else None
         return base64.b64encode(parsed, alt).decode("ascii")
+
+
+class ModelType_Ephemeral(ModelType_Object):
+    t = Ephemeral
+
+    @classmethod
+    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+        if isinstance(val, Ephemeral):
+            val = val.value
+        if val is None:
+            return True
+        if not elem.is_generic():
+            return True
+        orig, gen = elem.generics[0].origin, elem.generics[0].generics
+        if ClassHelpers.check_generic_instance(val, orig, *gen):
+            return True
+        return False
+
+    @classmethod
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+        if isinstance(val, Ephemeral):
+            val = val.value
+        if cls.is_valid(val, elem, **kwargs):
+            return val
+        raise cls._parse_error(val, elem, f"; must already be an object of the expected type.  Also, "
+                                          f"beware of using custom generic classes, as they might not "
+                                          f"be validated correctly here (TODO).  A workaround in this case "
+                                          f"is to just not specific the generics in the definition.", **kwargs)
+
+    @classmethod
+    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
+        return cls._parse_for_dump(val, elem, **kwargs)
