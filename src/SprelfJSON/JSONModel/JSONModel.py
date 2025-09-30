@@ -187,7 +187,9 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         """
         Parses the given JSON into an object of this type (or a subclass)
         """
-        copy = {**o}
+        model = cls.model()
+        copy = {k: v for k, v in o.items()
+                if not (mt := model.get(k, None)) or not mt.ephemeral}
         subclass = cls._extract_subclass(copy)
         return subclass(**copy, **kwargs)
 

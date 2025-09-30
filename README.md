@@ -431,6 +431,75 @@ There are additional class-level options in `ModelElem`:
  - `__base64_altchars__: tuple[bytes, ...]`: A list of 2-character byte strings that define the allowable base64 alternate characters when parsing a string to `bytes`.
 The parser will try each one in order until one succeeds.  The dumper will always use the first byte string here.  By default, is defined as `(b"-_", b"+/")`, preferring URL-safe altchars.
 
+## Ephemeral Values
+
+The `Ephemeral` class provides a wrapper for any object, allowing its functionality and identity to be mimicked without exposing its wrapped value to the JSON serialization/deserialization process. This means that objects wrapped in `Ephemeral` are explicitly *not* parsed from or dumped to JSON. They exist solely in memory, holding values that are manipulated transiently and then forgotten, making their contents irrelevant to JSON-serializability.
+
+This is intended to be useful for values that are created and used at runtime but should never persist in a serialized form (e.g., database connections, temporary calculations, sensitive runtime data).
+
+**Key Characteristics:**
+-   **Wrapper:** Encapsulates any Python object.
+-   **Accessor Exposure:** It delegates attribute access (`__getattr__`, `__setattr__`, `__delattr__`) to the wrapped object, making it behave much like the object it contains.
+-   **In-Memory Only:** `Ephemeral` instances and their wrapped values are never included when a `JSONModel` is dumped to JSON, nor are they expected when parsing JSON into a `JSONModel`.
+-   **Non-JSON-Serializable Contents:** Because they don't interact with JSON serialization, the objects wrapped by `Ephemeral` do not need to be JSON-serializable themselves.
+
+**Example Usage:**
+
+```python
+from SprelfJSON import JSONModel, Ephemeral
+import datetime
+
+class MyTransientObject:
+    def __init__(self, data):
+        self.data = data
+    def process(self):
+        return f"Processed: {self.data}"
+
+class DataContainer(JSONModel):
+    name: str
+    # This field will be ignored during parsing from JSON and dumping to JSON.
+    runtime_data: Ephemeral[MyTransientObject]
+    
+    # You can also set a default value for Ephemeral fields.
+    # Note that the default value must also be wrapped in Ephemeral.
+    current_timestamp: Ephemeral[datetime.datetime] = Ephemeral(datetime.datetime.now())
+
+# Creating an instance with an Ephemeral field
+transient_obj = MyTransientObject("some important runtime info")
+container = DataContainer(
+    name="Report",
+    runtime_data=Ephemeral(transient_obj)
+)
+
+print(container.name)               # Output: Report
+print(container.runtime_data.data)  # Output: some important runtime info
+print(container.runtime_data.process()) # Output: Processed: some important runtime info
+print(container.current_timestamp.value) # Output: (Current datetime object)
+
+# Dumping to JSON will omit runtime_data and current_timestamp
+# even though runtime_data was explicitly provided and current_timestamp has a default.
+dumped_json = container.to_json()
+print(dumped_json)
+# Output: {'name': 'Report'} 
+
+# Parsing from JSON:
+# Values provided in JSON for Ephemeral fields will be ignored.
+json_input_data = {
+    "name": "Another Report",
+    "runtime_data": {"data": "this data will be ignored"}, # This field will be ignored during parsing!
+}
+parsed_container = DataContainer.from_json(json_input_data)
+print(parsed_container.name)                  # Output: Another Report
+# When parsing from JSON, if the JSON data does not contain a value for an Ephemeral field, 
+# the field will be set to None, unless a default is specified.
+print(parsed_container.runtime_data)          # Output: None
+``` 
+
+**Utility Methods:**
+-   `Ephemeral.is_ephemeral(obj: Any) -> bool`: Checks if an object is an instance of `Ephemeral` or has the `__is_ephemeral__` attribute set to `True`.
+-   `Ephemeral.unwrap(o: Ephemeral[T] | T) -> T`: Returns the wrapped value if `o` is an `Ephemeral` instance, otherwise returns `o` itself.
+
+
 ## Known issues
 
  - When subclassing a `JSONModel` subclass that has a default value in a field, IDEs may provide a warning related to "non-default arguments following default arguments". When actually running the code, there is no issue here, so it's safe to ignore or suppress such warnings.
