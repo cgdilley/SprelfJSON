@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from unittest import TestCase
+from unittest import TestCase, main
+from typing import Sequence
 
 from SprelfJSON import *
 
@@ -59,3 +60,101 @@ class TestJSONBasics(TestCase):
         self.assertIsNone(json_get(None, ("a",)))
         self.assertIsNone(json_get(obj, ("a", "c", 4)))
         self.assertEqual("asdf", json_get(obj, "x", default="asdf"))
+
+
+class TestJSONValueLike(TestCase):
+    def test_value_like_instances(self):
+        self.assertIsInstance(None, JSONValueLike)
+        self.assertIsInstance(True, JSONValueLike)
+        self.assertIsInstance(42, JSONValueLike)
+        self.assertIsInstance(3.14, JSONValueLike)
+        self.assertIsInstance("hello", JSONValueLike)
+
+        self.assertNotIsInstance([], JSONValueLike)
+        self.assertNotIsInstance({}, JSONValueLike)
+
+    def test_value_like_subclasses(self):
+        self.assertTrue(issubclass(int, JSONValueLike))
+        self.assertTrue(issubclass(str, JSONValueLike))
+        self.assertTrue(issubclass(float, JSONValueLike))
+        self.assertTrue(issubclass(bool, JSONValueLike))
+        self.assertTrue(issubclass(type(None), JSONValueLike))
+
+        self.assertFalse(issubclass(list, JSONValueLike))
+        self.assertFalse(issubclass(dict, JSONValueLike))
+
+
+class TestJSONObjectLike(TestCase):
+    def test_object_like_instances(self):
+        self.assertIsInstance({"a": 1}, JSONObjectLike)
+        self.assertIsInstance({"a": [1, 2]}, JSONObjectLike)
+        self.assertIsInstance({"a": {"b": "c"}}, JSONObjectLike)
+
+        self.assertNotIsInstance({1: "bad"}, JSONObjectLike)   # non-str key
+        self.assertNotIsInstance({"a": set()}, JSONObjectLike) # invalid value type
+        self.assertNotIsInstance([], JSONObjectLike)
+
+    def test_object_like_subclasses(self):
+        self.assertTrue(issubclass(dict[str, int], JSONObjectLike))
+        self.assertTrue(issubclass(dict[str, list[int]], JSONObjectLike))
+
+        self.assertFalse(issubclass(dict[int, str], JSONObjectLike))
+        self.assertFalse(issubclass(list[int], JSONObjectLike))
+
+
+class TestJSONArrayLike(TestCase):
+    def test_array_like_instances(self):
+        self.assertIsInstance([1, 2, 3], JSONArrayLike)
+        self.assertIsInstance(["a", {"b": 2}], JSONArrayLike)
+        self.assertIsInstance((1, 2), JSONArrayLike)
+
+        self.assertNotIsInstance("not an array", JSONArrayLike)
+        self.assertNotIsInstance([set()], JSONArrayLike)  # invalid element
+
+    def test_array_like_subclasses(self):
+        self.assertTrue(issubclass(list[int], JSONArrayLike))
+        self.assertTrue(issubclass(Sequence[str], JSONArrayLike))
+        self.assertTrue(issubclass(list[dict[str, int]], JSONArrayLike))
+
+        self.assertFalse(issubclass(dict[str, int], JSONArrayLike))
+
+
+class TestJSONContainerLike(TestCase):
+    def test_container_like_instances(self):
+        self.assertIsInstance([], JSONContainerLike)
+        self.assertIsInstance({}, JSONContainerLike)
+        self.assertIsInstance([{"a": 1}], JSONContainerLike)
+
+        self.assertNotIsInstance(42, JSONContainerLike)
+        self.assertNotIsInstance("hello", JSONContainerLike)
+
+    def test_container_like_subclasses(self):
+        self.assertTrue(issubclass(list[int], JSONContainerLike))
+        self.assertTrue(issubclass(dict[str, int], JSONContainerLike))
+
+        self.assertFalse(issubclass(int, JSONContainerLike))
+
+
+class TestJSONLike(TestCase):
+    def test_json_like_instances(self):
+        self.assertIsInstance(None, JSONLike)
+        self.assertIsInstance(True, JSONLike)
+        self.assertIsInstance(123, JSONLike)
+        self.assertIsInstance("abc", JSONLike)
+        self.assertIsInstance([], JSONLike)
+        self.assertIsInstance({}, JSONLike)
+        self.assertIsInstance([{"a": 1}, 2, "x"], JSONLike)
+
+        class Foo: pass
+        self.assertNotIsInstance(Foo(), JSONLike)
+
+    def test_json_like_subclasses(self):
+        self.assertTrue(issubclass(int, JSONLike))
+        self.assertTrue(issubclass(str, JSONLike))
+        self.assertTrue(issubclass(dict[str, int], JSONLike))
+        self.assertTrue(issubclass(list[int], JSONLike))
+
+        self.assertFalse(issubclass(set, JSONLike))   # sets not allowed
+
+if __name__ == "__main__":
+    main()

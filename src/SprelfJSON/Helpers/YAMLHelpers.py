@@ -15,7 +15,7 @@ def yaml():
         from ruamel.yaml import YAML, YAMLError as ye
         YAMLError = ye
         y = YAML(typ="safe")
-        y.indent = 4
+        y.indent = 2
         y.encoding = "utf-8"
         y.default_flow_style = False
         return y

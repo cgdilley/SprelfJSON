@@ -9,8 +9,10 @@ import inspect
 
 import typing_inspect
 
+from SprelfJSON import JSONArrayLike
 from SprelfJSON.JSONModel.ModelElem import ModelElem, ModelElemError, SupportedTypeMap, AlternateModelElem
-from SprelfJSON.JSONDefinitions import JSONObject, JSONType, JSONConvertible
+from SprelfJSON.JSONDefinitions import JSONObject, JSONType, JSONConvertible, JSONContainerLike, JSONValueLike, \
+    JSONContainer, JSONValue, JSONLike, JSONObjectLike, JSONArray
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 from SprelfJSON.Helpers import ClassHelpers
 
@@ -37,6 +39,11 @@ class JSONModelMeta(ABCMeta):
                         **typing.__dict__,
                         ModelElem.__name__: ModelElem,
                         AlternateModelElem.__name__: AlternateModelElem}
+    __annotation_conversions__ = {JSONObject: JSONObjectLike,
+                                  JSONArray: JSONArrayLike,
+                                  JSONType: JSONLike,
+                                  JSONContainer: JSONContainerLike,
+                                  JSONValue: JSONValueLike}
 
     @classmethod
     def _eval(cls, s: Any, context: dict):
@@ -123,6 +130,8 @@ class JSONModelMeta(ABCMeta):
 
         evaluated_anno = {k: mcls._eval(v, eval_context)
                           for k, v in given_anno.items()}
+        evaluated_anno = {k: mcls.__annotation_conversions__.get(v, v)
+                          for k, v in evaluated_anno.items()}
 
         def _build_model_elem(k, v):
             if isinstance(v, ModelElem):

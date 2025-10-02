@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from types import UnionType, NoneType, GeneratorType
 
-from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType
+from SprelfJSON import JSONObjectLike, JSONValueLike
+from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType, JSONLike, JSONArrayLike, JSONContainerLike
 from SprelfJSON.Helpers import ClassHelpers, TimeHelpers
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 from SprelfJSON.Objects import Ephemeral
@@ -29,6 +30,7 @@ SupportedTypes = (dict, list, set, tuple, bool, str, int, float, bytes, type, No
                   Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection,
                   Iterable, Iterator, Generator,
                   JSONable, UnionType, NoneType,
+                  JSONValueLike, JSONContainerLike, JSONLike, JSONObjectLike, JSONArrayLike,
                   Ephemeral)
 SupportedUnion = Union[SupportedTypes]
 SupportedTypeMap = {t.__name__: t for t in SupportedTypes if t is not None}
@@ -420,6 +422,25 @@ class ModelType_None(ModelType):
         return None
 
 
+class ModelType_JSONLike(ModelType):
+
+    @classmethod
+    def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
+        return elem.origin in (JSONLike, JSONObjectLike, JSONArrayLike, JSONValueLike, JSONContainerLike)
+
+    @classmethod
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs):
+        if not isinstance(val, elem.origin):
+            raise cls._parse_error(val, elem, f"; does not fit the specified JSON-compatible structure.")
+        return val
+
+    @classmethod
+    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
+        if not isinstance(val, elem.origin):
+            raise cls._dump_error(val, elem, f"could not be dumped as specified JSON-compatible structure.")
+        return val
+
+
 class ModelType_Union(ModelType):
 
     @classmethod
@@ -646,8 +667,8 @@ class ModelType_Dict(ModelType):
             if len(elem.generics) == 0:
                 return d
             if all(isinstance(k, str) for k in d.keys()):
-                if elem.generics[0].origin == str:
-                    return {k: elem.generics[1].parse_value(v) for k, v in d.items()}
+                if inspect.isclass(elem.generics[0].origin) and issubclass(elem.generics[0].origin, str):
+                    return {str(k): elem.generics[1].parse_value(v) for k, v in d.items()}
                 return {elem.generics[0].parse_value(json.loads(k)): elem.generics[1].parse_value(v)
                         for k, v in d.items()}
             else:
@@ -660,8 +681,8 @@ class ModelType_Dict(ModelType):
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         if len(elem.generics) == 0:
             return dict(parsed)
-        if elem.generics[0].origin == str:
-            return {k: elem.generics[1].dump_value(v) for k, v in parsed.items()}
+        if inspect.isclass(elem.generics[0].origin) and issubclass(elem.generics[0].origin, str):
+            return {str(k): elem.generics[1].dump_value(v) for k, v in parsed.items()}
         return {json.dumps(elem.generics[0].dump_value(k)): elem.generics[1].dump_value(v)
                 for k, v in parsed.items()}
 

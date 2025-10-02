@@ -766,6 +766,146 @@ class TestJSONModel(unittest.TestCase):
             ModelWithTypeGenerics.from_json(json_data_invalid_value)
         self.assertIn("could not be interpreted as a type", str(cm.exception))
 
+class TestModelElem_JSONLike(unittest.TestCase):
+
+    def test_JSONValueLike_validate(self):
+        me = ModelElem(JSONValueLike)
+        self.assertTrue(me.is_valid(None))
+        self.assertTrue(me.is_valid(True))
+        self.assertTrue(me.is_valid(0))
+        self.assertTrue(me.is_valid(3.14))
+        self.assertTrue(me.is_valid("str"))
+
+        self.assertFalse(me.is_valid([]))
+        self.assertFalse(me.is_valid({}))
+
+        with self.assertRaises(ModelElemError):
+            me.validate([])  # not a JSON value
+
+    def test_JSONObjectLike_validate(self):
+        me = ModelElem(JSONObjectLike)
+
+        self.assertTrue(me.is_valid({}))
+        self.assertTrue(me.is_valid({"a": 1}))
+        self.assertTrue(me.is_valid({"a": [1, 2, {"b": "x"}]}))
+        self.assertTrue(me.is_valid({"x": {"y": True}}))
+
+        self.assertFalse(me.is_valid({1: "bad"}))   # non-string key
+        self.assertFalse(me.is_valid({"a": set()})) # invalid value type
+
+        with self.assertRaises(ModelElemError):
+            me.validate({"a": set()})
+
+    def test_JSONArrayLike_validate(self):
+        me = ModelElem(JSONArrayLike)
+
+        self.assertTrue(me.is_valid([]))
+        self.assertTrue(me.is_valid([1, 2, 3]))
+        self.assertTrue(me.is_valid(["a", {"b": 2}]))
+        self.assertTrue(me.is_valid([[1], {"x": "y"}, 3.0, None]))
+
+        self.assertFalse(me.is_valid("not an array"))
+        self.assertFalse(me.is_valid([set()]))  # invalid element
+
+        with self.assertRaises(ModelElemError):
+            me.validate([set()])
+
+    def test_JSONContainerLike_validate(self):
+        me = ModelElem(JSONContainerLike)
+
+        self.assertTrue(me.is_valid([]))
+        self.assertTrue(me.is_valid({}))
+        self.assertTrue(me.is_valid([{"a": 1}, 2, "x"]))
+        self.assertTrue(me.is_valid({"a": [1, 2], "b": {"c": False}}))
+
+        self.assertFalse(me.is_valid(42))
+        self.assertFalse(me.is_valid("hello"))
+
+        with self.assertRaises(ModelElemError):
+            me.validate(42)
+
+    def test_JSONLike_validate(self):
+        me = ModelElem(JSONLike)
+
+        self.assertTrue(me.is_valid(None))
+        self.assertTrue(me.is_valid(True))
+        self.assertTrue(me.is_valid(123))
+        self.assertTrue(me.is_valid("abc"))
+        self.assertTrue(me.is_valid([]))
+        self.assertTrue(me.is_valid({}))
+        self.assertTrue(me.is_valid([{"a": 1}, 2, "x"]))
+
+        class Foo: pass
+        self.assertFalse(me.is_valid(Foo()))
+        with self.assertRaises(ModelElemError):
+            me.validate(set())
+
+    def test_dump_roundtrip_JSONValueLike(self):
+        me = ModelElem(JSONValueLike)
+
+        for v in (None, True, 0, 3.14, "x"):
+            parsed = me.parse_value(v)
+            dumped = me.dump_value(parsed)
+            self.assertEqual(parsed, dumped)
+
+    def test_dump_roundtrip_JSONObjectLike(self):
+        me = ModelElem(JSONObjectLike)
+        v = {"a": 1, "b": [1, 2, {"c": "x"}], "d": {"e": False}}
+        parsed = me.parse_value(v)
+        dumped = me.dump_value(parsed)
+        self.assertEqual(parsed, dumped)
+
+    def test_dump_roundtrip_JSONArrayLike(self):
+        me = ModelElem(JSONArrayLike)
+        v = [1, "a", None, {"k": "v"}, [True, 2.0]]
+        parsed = me.parse_value(v)
+        dumped = me.dump_value(parsed)
+        self.assertEqual(parsed, dumped)
+
+    def test_dump_roundtrip_JSONContainerLike(self):
+        # dict
+        me_dict = ModelElem(JSONContainerLike)
+        v1 = {"x": [1, 2], "y": {"z": "w"}}
+        self.assertEqual(me_dict.dump_value(me_dict.parse_value(v1)), v1)
+
+        # list
+        me_list = ModelElem(JSONContainerLike)
+        v2 = [1, {"a": False}, ["b", None]]
+        self.assertEqual(me_list.dump_value(me_list.parse_value(v2)), v2)
+
+    def test_parse_error_messages(self):
+        me_val = ModelElem(JSONValueLike)
+        with self.assertRaises(ModelElemError) as cm1:
+            me_val.parse_value([1, 2])  # not a value-like
+        self.assertIn("Unable to parse value", str(cm1.exception))
+
+        me_obj = ModelElem(JSONObjectLike)
+        with self.assertRaises(ModelElemError) as cm2:
+            me_obj.parse_value({1: "bad"})  # non-string key
+        self.assertIn("Unable to parse value", str(cm2.exception))
+
+        me_arr = ModelElem(JSONArrayLike)
+        with self.assertRaises(ModelElemError) as cm3:
+            me_arr.parse_value([set()])  # invalid element
+        self.assertIn("Unable to parse value", str(cm3.exception))
+
+    def test_dump_error_messages(self):
+        me_val = ModelElem(JSONValueLike)
+        with self.assertRaises(ModelElemError) as cm1:
+            me_val.dump_value([1, 2])  # not a value-like
+        self.assertIn("could not be dumped", str(cm1.exception))
+
+        me_obj = ModelElem(JSONObjectLike)
+        with self.assertRaises(ModelElemError) as cm2:
+            me_obj.dump_value({1: "bad"})  # non-string key
+        self.assertIn("could not be dumped", str(cm2.exception))
+
+        me_arr = ModelElem(JSONArrayLike)
+        with self.assertRaises(ModelElemError) as cm3:
+            me_arr.dump_value([set()])  # invalid element
+        self.assertIn("could not be dumped", str(cm3.exception))
+
+
 
 if __name__ == '__main__':
     unittest.main(argv=['first-arg-is-ignored'], exit=False)
