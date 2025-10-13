@@ -133,12 +133,12 @@ class JSONModelMeta(ABCMeta):
         evaluated_anno = {k: mcls.__annotation_conversions__.get(v, v)
                           for k, v in evaluated_anno.items()}
 
-        def _build_model_elem(k, v):
+        def _build_model_elem(k, v) -> ModelElem:
             if isinstance(v, ModelElem):
                 return v
             d = defaults.get(k, ())
             _orig, _gener = ClassHelpers.analyze_type(v)
-            if any(isinstance(_orig, x) for x in (list, dict, set)):
+            if inspect.isclass(_orig) and any(issubclass(_orig, x) for x in (list, dict, set)):
                 if len(d) == 0:
                     return ModelElem(v, default_factory=_orig)
                 else:

@@ -21,6 +21,10 @@ handling a variety of data types and supporting nested and polymorphic JSON stru
 
 `pip install sprelf-json`
 
+If you want to include YAML support:
+
+`pip install sprelf-json[yaml]`
+
 ## Basic Usage
 Define a simple JSON structure:
 
@@ -430,6 +434,49 @@ There are some class-level options in `JSONModel` to define certain types of beh
 There are additional class-level options in `ModelElem`:
  - `__base64_altchars__: tuple[bytes, ...]`: A list of 2-character byte strings that define the allowable base64 alternate characters when parsing a string to `bytes`.
 The parser will try each one in order until one succeeds.  The dumper will always use the first byte string here.  By default, is defined as `(b"-_", b"+/")`, preferring URL-safe altchars.
+
+
+## JSON Annotating and Duck-Typing
+
+`JSONDefinitions` contains a few helpers for both annotating and for validating JSON data.
+
+For annotating:
+```python
+from SprelfJSON import JSONType, JSONObject, JSONModel, JSONArray, JSONContainer, JSONValue
+def function(arg: JSONObject) -> JSONType:
+    ...
+
+class ExampleModel(JSONModel):
+    obj: JSONObject
+    arr: JSONArray
+    val: JSONValue # any JSON-compatible type other than object or array
+    container: JSONContainer # array or object
+    any: JSONType # any JSON-compatible type
+```
+
+For validating using duck-typing classes:
+```python
+from __future__ import annotations
+from SprelfJSON import JSONObjectLike, JSONLike, JSONArrayLike, JSONContainerLike, JSONValueLike
+
+print(isinstance({"a": 1}, JSONObjectLike)) # Output: True
+print(isinstance(1, JSONObjectLike)) # Output: False
+print(isinstance([1, 2, 3], JSONArrayLike)) # Output: True
+print(isinstance(1, JSONArrayLike)) # Output: False
+print(isinstance({"a": 1}, JSONContainerLike)) # Output: True
+print(isinstance([1, 2, 3], JSONContainerLike)) # Output: True
+print(isinstance(1, JSONValueLike)) # Output: True
+print(isinstance("hello", JSONValueLike)) # Output: True
+print(isinstance(True, JSONValueLike)) # Output: True
+print(isinstance(None, JSONValueLike)) # Output: True
+print(isinstance([1, 2, 3], JSONValueLike)) # Output: False
+print(isinstance(1, JSONLike)) # Output: True
+
+# Or similarly with subclasses...
+print(issubclass(int, JSONValueLike)) # Output: True
+print(issubclass(dict[str, int], JSONObjectLike)) # Output: True
+print(issubclass(dict[int, int], JSONObjectLike)) # Output: False
+```
 
 ## Ephemeral Values
 
