@@ -5,6 +5,7 @@ from typing import Iterable, TypeAlias, get_origin, get_args, Any, TypeVar, Iter
 from types import ModuleType
 import collections
 import typing
+import types
 import inspect
 import pydoc
 import builtins
@@ -102,11 +103,16 @@ def as_generic(origin: Any, *generics: Any) -> Any:
     try:
         return origin[generics]
     except TypeError:
+        if origin == types.UnionType:
+            return typing.Union[generics]
+
         # fallback to typing equivalents if needed
-        origin_name = origin.__name__.capitalize()
-        typing_origin = getattr(typing, origin_name, None)
-        if typing_origin:
-            return typing_origin[generics]
+        origin_names = (origin.__name__, origin.__name__.capitalize())
+        for origin_name in origin_names:
+            for module in (typing, types):
+                typing_origin = getattr(module, origin_name, None)
+                if typing_origin:
+                    return typing_origin[generics]
         raise
 
 #

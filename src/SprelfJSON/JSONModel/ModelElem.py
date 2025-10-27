@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from types import UnionType, NoneType, GeneratorType
-
 from SprelfJSON import JSONObjectLike, JSONValueLike
 from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType, JSONLike, JSONArrayLike, JSONContainerLike
 from SprelfJSON.Helpers import ClassHelpers, TimeHelpers
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 from SprelfJSON.Objects import Ephemeral
 
-from typing import Any, TypeVar, Callable, Union
-import typing
+from typing import Any, TypeVar, Callable, Union, Optional
+from types import UnionType, NoneType, GeneratorType
 from collections.abc import Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection, \
     Iterator, Iterable, Generator, Set
 import typing_inspect
@@ -17,7 +15,6 @@ import inspect
 import base64
 import json
 import re
-import builtins
 from abc import ABC, abstractmethod
 
 from datetime import datetime, date, time, timedelta
@@ -32,9 +29,8 @@ SupportedTypes = (dict, list, set, tuple, bool, str, int, float, bytes, type, No
                   JSONable, UnionType, NoneType,
                   JSONValueLike, JSONContainerLike, JSONLike, JSONObjectLike, JSONArrayLike,
                   Ephemeral)
-SupportedUnion = Union[SupportedTypes]
+Supported = Union[SupportedTypes]
 SupportedTypeMap = {t.__name__: t for t in SupportedTypes if t is not None}
-T = Union[SupportedTypes[:-1]]
 _SupportedTypes_O1 = set(SupportedTypes)
 
 
@@ -57,9 +53,9 @@ class _BaseModelElem:
     _AliasedModelTypes: list[type[ModelType]] = None
     _ConcreteModelTypes: list[type[ModelType]] = None
 
-    def __init__(self, typ: type[T], _ephemeral: bool = False, _type: bool = False):
+    def __init__(self, typ: type[Supported], _ephemeral: bool = False, _type: bool = False):
         t, gen = type(self)._validate_definition(typ, _ephemeral, _type)
-        self.origin: type[T] = t
+        self.origin: type[Supported] = t
         self.generics: tuple[_BaseModelElem, ...] = gen
         self._model_type: type[ModelType] | None = None
 
@@ -80,7 +76,7 @@ class _BaseModelElem:
         return self.origin
 
     @property
-    def annotated_type(self) -> type[T]:
+    def annotated_type(self) -> type[Supported]:
         return ClassHelpers.as_generic(self.origin, *(g.annotated_type for g in self.generics))
 
     @property
@@ -97,7 +93,7 @@ class _BaseModelElem:
         except ModelElemError:
             return False
 
-    def validate(self, value: Any, *, key: str | None = None, **kwargs) -> T:
+    def validate(self, value: Any, *, key: str | None = None, **kwargs) -> Supported:
         """
         Validates that the given value conforms to the type defined by this model element, transforming
         it if needed, and returning that potentially-transformed value.
@@ -117,7 +113,7 @@ class _BaseModelElem:
         raise ModelElemError(self, f"Schema mismatch: Expected type '{self.annotation}', "
                                    f"but got '{t_str}' instead")
 
-    def _is_valid(self, val: T, **kwargs) -> bool:
+    def _is_valid(self, val: Supported, **kwargs) -> bool:
         return self.validate_type(val, **kwargs)
 
     #
@@ -151,27 +147,27 @@ class _BaseModelElem:
 
     #
 
-    def validate_type(self, val: T, **kwargs) -> bool:
+    def validate_type(self, val: Supported, **kwargs) -> bool:
         try:
             mt = self.get_matching_model_type(**kwargs)
             return mt.is_valid(val, self, **kwargs)
         except ModelElemError:
             return False
 
-    def parse_value(self, val: Any, **kwargs) -> T:
+    def parse_value(self, val: Any, **kwargs) -> Supported:
         """
         Parses the given value to conform with the type defined by this model element, if possible.
         If unsuccessful, a ModelElemError is raised.
         """
         return self._parse_value(val, **kwargs)
 
-    def _parse_value(self, val: Any, **kwargs) -> T:
+    def _parse_value(self, val: Any, **kwargs) -> Supported:
         mt = self.get_matching_model_type(**kwargs)
         return mt.parse(val, self, **kwargs)
 
     #
 
-    def dump_value(self, val: T, *, key: str | None = None, **kwargs) -> JSONType:
+    def dump_value(self, val: Supported, *, key: str | None = None, **kwargs) -> JSONType:
         """
         Dumps the given value into a JSON-friendly type representing the type
         defined by this model element, if the given value can be validated (see validate()).
@@ -183,14 +179,15 @@ class _BaseModelElem:
         """
         return self._dump_value(val, key=key)
 
-    def _dump_value(self, val: T, **kwargs) -> JSONType:
+    def _dump_value(self, val: Supported, **kwargs) -> JSONType:
         mt = self.get_matching_model_type(**kwargs)
         return mt.dump(val, self, **kwargs)
 
     #
 
     @classmethod
-    def _validate_definition(cls, val_type: type, _ephemeral: bool, _type: bool) -> tuple[type, tuple[_BaseModelElem, ...]]:
+    def _validate_definition(cls, val_type: type, _ephemeral: bool, _type: bool) -> \
+            tuple[type, tuple[_BaseModelElem, ...]]:
         t, gen = ClassHelpers.analyze_type(val_type)
         if t is None or (inspect.isclass(t) and not _ephemeral and not _type and
                          all(not inspect.isclass(supported) or not issubclass(t, supported)
@@ -223,10 +220,10 @@ class ModelElem(_BaseModelElem):
     _BaseModelElem, including default values and alternate parsing.
     """
 
-    def __init__(self, typ: type[T],
+    def __init__(self, typ: type[Supported],
                  *,
-                 default: T | tuple[()] | None = (),
-                 default_factory: Callable[[], T] | None = None,
+                 default: Union[Supported, tuple[()], None] = (),
+                 default_factory: Callable[[], Supported] | None = None,
                  alternates: Iterable[AlternateModelElem] = (),
                  use_alternates_only: bool = False,
                  ignored: bool = False):
@@ -244,7 +241,7 @@ class ModelElem(_BaseModelElem):
                 else (default,) if default != () else (None,)
         else:
             self._default_factory = None
-            self._default: tuple[T | None] = \
+            self._default: tuple[Optional[Supported]] = \
                 (default,) if not isinstance(default, tuple) or len(default) > 0 else default
 
     # OVERRIDE
@@ -255,7 +252,7 @@ class ModelElem(_BaseModelElem):
         return f"{type(self).__name__}({','.join(values)})"
 
     @property
-    def default(self) -> T | None:
+    def default(self) -> Optional[Supported]:
         if not self.has_default():
             raise ModelElemError(self, "ModelElem does not have a default value; cannot access")
         if self._default_factory is not None:
@@ -276,7 +273,7 @@ class ModelElem(_BaseModelElem):
     #
 
     # OVERRIDE
-    def parse_value(self, val: Any, *, key: str | None = None, **kwargs) -> T:
+    def parse_value(self, val: Any, *, key: str | None = None, **kwargs) -> Supported:
         if self.ignored:
             return None
 
@@ -299,7 +296,7 @@ class ModelElem(_BaseModelElem):
                              ".")
 
     # OVERRIDE
-    def dump_value(self, val: T, *, key: str | None = None, **kwargs) -> JSONType:
+    def dump_value(self, val: Supported, *, key: str | None = None, **kwargs) -> JSONType:
         if self.ignored:
             return None
         if self.ephemeral:
@@ -327,7 +324,7 @@ class ModelElem(_BaseModelElem):
                              ".")
 
     # OVERRIDE
-    def validate(self, value: Any, **kwargs) -> T:
+    def validate(self, value: Any, **kwargs) -> Supported:
         if self.ignored:
             return None
 
@@ -343,7 +340,7 @@ class ModelElem(_BaseModelElem):
 class AlternateModelElem(_BaseModelElem):
 
     def __init__(self, typ: type[T2],
-                 transformer: Callable[[T2], T],
+                 transformer: Callable[[T2], Supported],
                  jsonifier: Callable[[Any], SupportedTypes] | None = None):
         super().__init__(typ)
         self.transformer = transformer
@@ -367,12 +364,12 @@ class ModelType(ABC):
         pass
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         return isinstance(val, elem.origin)
 
     @classmethod
     @abstractmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         pass
 
     @classmethod
@@ -403,6 +400,7 @@ class ModelType(ABC):
 #
 
 
+# noinspection PyPep8Naming
 class ModelType_None(ModelType):
 
     @classmethod
@@ -410,11 +408,11 @@ class ModelType_None(ModelType):
         return elem.origin is None or elem.origin is NoneType
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         return val is None
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         return None
 
     @classmethod
@@ -422,6 +420,7 @@ class ModelType_None(ModelType):
         return None
 
 
+# noinspection PyPep8Naming
 class ModelType_JSONLike(ModelType):
 
     @classmethod
@@ -441,18 +440,19 @@ class ModelType_JSONLike(ModelType):
         return val
 
 
+# noinspection PyPep8Naming
 class ModelType_Union(ModelType):
 
     @classmethod
     def test_origin(cls, elem: _BaseModelElem, **kwargs) -> bool:
-        return typing_inspect.is_union_type(elem.origin)
+        return typing_inspect.is_union_type(elem.origin) or elem.origin in (Union, UnionType)
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         return any(g.validate_type(val) for g in elem.generics)
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         for g in elem.generics:
             try:
                 return g.parse_value(val)
@@ -473,6 +473,7 @@ class ModelType_Union(ModelType):
                               **kwargs)
 
 
+# noinspection PyPep8Naming
 class ModelType_Optional(ModelType):
 
     @classmethod
@@ -480,7 +481,7 @@ class ModelType_Optional(ModelType):
         return typing_inspect.is_optional_type(elem.origin)
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if val is None:
             return val
         if len(elem.generics) > 0:
@@ -488,7 +489,7 @@ class ModelType_Optional(ModelType):
         return val
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         if val is None:
             return True
         return len(elem.generics) == 0 or elem.generics[0].is_valid(val)
@@ -501,6 +502,7 @@ class ModelType_Optional(ModelType):
             return elem.generics[0].dump_value(val, **kwargs)
 
 
+# noinspection PyPep8Naming
 class ModelType_Generator(ModelType):
 
     @classmethod
@@ -508,7 +510,7 @@ class ModelType_Generator(ModelType):
         return elem.origin in (Generator, Iterable, Iterator, GeneratorType)
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"; value is not iterable.")
         if len(elem.generics) > 0:
@@ -525,6 +527,7 @@ class ModelType_Generator(ModelType):
         return list(parsed)
 
 
+# noinspection PyPep8Naming
 class ModelType_Sequence(ModelType_Generator):
 
     @classmethod
@@ -532,12 +535,12 @@ class ModelType_Sequence(ModelType_Generator):
         return elem.origin in (Sequence, Collection, MutableSequence, MutableSet, Set)
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         return (isinstance(val, elem.origin)) \
             and (len(elem.generics) == 0 or all(elem.generics[0].is_valid(x) for x in val))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"; value is not an iterable.")
         if len(elem.generics) > 0:
@@ -550,6 +553,7 @@ class ModelType_Sequence(ModelType_Generator):
                                    f"the expected type '{elem.annotated_type!r}'")
 
 
+# noinspection PyPep8Naming
 class ModelType_Object(ModelType, ABC):
     t: type
 
@@ -561,17 +565,18 @@ class ModelType_Object(ModelType, ABC):
             return False
 
 
+# noinspection PyPep8Naming
 class ModelType_List(ModelType_Object):
     t = list
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         return (isinstance(val, cls.t) and
                 (len(elem.generics) == 0 or all(elem.generics[0].is_valid(x, **kwargs)
                                                 for x in val)))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"; object is not iterable.", **kwargs)
         if len(elem.generics) > 0:
@@ -589,19 +594,22 @@ class ModelType_List(ModelType_Object):
         return list(parsed)
 
 
+# noinspection PyPep8Naming
 class ModelType_Set(ModelType_List):
     t = set
 
 
+# noinspection PyPep8Naming
 class ModelType_FrozenSet(ModelType_List):
     t = frozenset
 
 
+# noinspection PyPep8Naming
 class ModelType_Tuple(ModelType_List):
     t = tuple
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         if not isinstance(val, tuple):
             return False
         if len(elem.generics) == 2 and elem.generics[1].origin is Ellipsis:
@@ -613,7 +621,7 @@ class ModelType_Tuple(ModelType_List):
         return all(g.is_valid(x) for g, x in zip(elem.generics, val))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if not isinstance(val, Collection):
             raise cls._parse_error(val, elem, f"; value is not a collection.", **kwargs)
         if len(elem.generics) == 2 and elem.generics[1].origin is Ellipsis:
@@ -644,6 +652,7 @@ class ModelType_Tuple(ModelType_List):
                                **kwargs)
 
 
+# noinspection PyPep8Naming
 class ModelType_Dict(ModelType):
 
     @classmethod
@@ -652,13 +661,13 @@ class ModelType_Dict(ModelType):
             or (inspect.isclass(elem.origin) and issubclass(elem.origin, dict))
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         return (isinstance(val, Mapping) and
                 (len(elem.generics) == 0 or all(elem.generics[0].is_valid(k) and elem.generics[1].is_valid(v)
                                                 for k, v in val.items())))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if ClassHelpers.check_generic_instance(val, Iterable, tuple[Any, Any]):
             d = {k: v for k, v in val}
         else:
@@ -681,23 +690,27 @@ class ModelType_Dict(ModelType):
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         if len(elem.generics) == 0:
             return dict(parsed)
-        if inspect.isclass(elem.generics[0].origin) and issubclass(elem.generics[0].origin, str):
-            return {str(k): elem.generics[1].dump_value(v) for k, v in parsed.items()}
-        return {json.dumps(elem.generics[0].dump_value(k)): elem.generics[1].dump_value(v)
-                for k, v in parsed.items()}
+        if inspect.isclass(elem.generics[0].origin):
+            if issubclass(elem.generics[0].origin, str):
+                return {str(k): elem.generics[1].dump_value(v) for k, v in parsed.items()}
+
+        return {(json.dumps(dk) if not isinstance(dk, str) else dk): dv
+                for dk, dv in
+                ((elem.generics[0].dump_value(k), elem.generics[1].dump_value(v)) for k, v in parsed.items())}
 
 
+# noinspection PyPep8Naming
 class ModelType_Type(ModelType_Object):
     t = type
     __output_full_class_name__: bool = True
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         return (inspect.isclass(val) and
                 (len(elem.generics) == 0 or ClassHelpers.check_subclass(val, elem.generics[0].annotated_type)))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, str):
             if val.lower() == "datetime":
                 return datetime
@@ -725,13 +738,14 @@ class ModelType_Type(ModelType_Object):
         if any(parsed.__module__ == m for m in ("builtins", "datetime", "typing", "enum")) \
                 or not cls.__output_full_class_name__:
             return parsed.__name__
-        return  ClassHelpers.full_name(parsed)
+        return ClassHelpers.full_name(parsed)
 
 
+# noinspection PyPep8Naming
 class ModelType_Concrete(ModelType_Object, ABC):
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, elem.origin):
             return val
         else:
@@ -739,10 +753,11 @@ class ModelType_Concrete(ModelType_Object, ABC):
 
     @classmethod
     @abstractmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         ...
 
 
+# noinspection PyPep8Naming
 class ModelType_Basic(ModelType_Concrete):
 
     @classmethod
@@ -750,7 +765,7 @@ class ModelType_Basic(ModelType_Concrete):
         return any(issubclass(elem.origin, x) for x in (str, int, float, bool))
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if issubclass(elem.origin, float) and isinstance(val, int):
             return float(val)
         raise cls._parse_error(val, elem, "", **kwargs)
@@ -760,6 +775,7 @@ class ModelType_Basic(ModelType_Concrete):
         return cls._parse_for_dump(val, elem, **kwargs)
 
 
+# noinspection PyPep8Naming
 class ModelType_Pattern(ModelType_Concrete):
 
     @classmethod
@@ -767,7 +783,7 @@ class ModelType_Pattern(ModelType_Concrete):
         return issubclass(elem.origin, re.Pattern)
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, str):
             try:
                 return re.compile(val)
@@ -781,6 +797,7 @@ class ModelType_Pattern(ModelType_Concrete):
         return parsed.pattern
 
 
+# noinspection PyPep8Naming
 class ModelType_DateTime(ModelType_Concrete):
     t = datetime
 
@@ -789,7 +806,7 @@ class ModelType_DateTime(ModelType_Concrete):
         return elem.origin == datetime
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         try:
             return TimeHelpers.parse_datetime(val)
         except ValueError:
@@ -800,6 +817,7 @@ class ModelType_DateTime(ModelType_Concrete):
         return TimeHelpers.stringify_datetime(cls._parse_for_dump(val, elem, **kwargs))
 
 
+# noinspection PyPep8Naming
 class ModelType_Date(ModelType_Concrete):
     t = date
 
@@ -808,7 +826,7 @@ class ModelType_Date(ModelType_Concrete):
         return elem.origin == date
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         try:
             return TimeHelpers.parse_date(val)
         except ValueError:
@@ -819,6 +837,7 @@ class ModelType_Date(ModelType_Concrete):
         return TimeHelpers.stringify_date(cls._parse_for_dump(val, elem, **kwargs))
 
 
+# noinspection PyPep8Naming
 class ModelType_Time(ModelType_Concrete):
     t = time
 
@@ -827,7 +846,7 @@ class ModelType_Time(ModelType_Concrete):
         return elem.origin == time
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         try:
             return TimeHelpers.parse_time(val)
         except ValueError:
@@ -838,11 +857,12 @@ class ModelType_Time(ModelType_Concrete):
         return TimeHelpers.stringify_time(cls._parse_for_dump(val, elem, **kwargs))
 
 
+# noinspection PyPep8Naming
 class ModelType_TimeDelta(ModelType_Concrete):
     t = timedelta
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, str):
             if m := TimeHelpers.TIMEDELTA_REGEX.match(val):
                 groups = m.groupdict()
@@ -866,11 +886,12 @@ class ModelType_TimeDelta(ModelType_Concrete):
         return int(cls._parse_for_dump(val, elem, **kwargs).total_seconds() * 1000)
 
 
+# noinspection PyPep8Naming
 class ModelType_IntFlag(ModelType_Concrete):
     t = IntFlag
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, int):
             try:
                 return elem.origin(val)
@@ -883,11 +904,12 @@ class ModelType_IntFlag(ModelType_Concrete):
         return cls._parse_for_dump(val, elem, **kwargs).value
 
 
+# noinspection PyPep8Naming
 class ModelType_IntEnum(ModelType_Concrete):
     t = IntEnum
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, int):
             try:
                 return elem.origin(val)
@@ -908,11 +930,12 @@ class ModelType_IntEnum(ModelType_Concrete):
         return cls._parse_for_dump(val, elem, **kwargs).value
 
 
+# noinspection PyPep8Naming
 class ModelType_StrEnum(ModelType_Concrete):
     t = StrEnum
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, str):
             try:
                 return elem.origin(val)
@@ -926,6 +949,7 @@ class ModelType_StrEnum(ModelType_Concrete):
         return cls._parse_for_dump(val, elem, **kwargs).value
 
 
+# noinspection PyPep8Naming
 class ModelType_Enum(ModelType_Concrete):
     t = Enum
 
@@ -935,7 +959,7 @@ class ModelType_Enum(ModelType_Concrete):
                                                          for x in (IntEnum, StrEnum, IntFlag))
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, str):
             try:
                 return elem.origin[val]
@@ -951,11 +975,12 @@ class ModelType_Enum(ModelType_Concrete):
         return cls._parse_for_dump(val, elem, **kwargs).name
 
 
+# noinspection PyPep8Naming
 class ModelType_JSON(ModelType_Concrete):
     t = JSONConvertible
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, str):
             try:
                 return elem.origin.from_json(json.loads(val))
@@ -971,11 +996,12 @@ class ModelType_JSON(ModelType_Concrete):
         return cls._parse_for_dump(val, elem, **kwargs).to_json()
 
 
+# noinspection PyPep8Naming
 class ModelType_Bytes(ModelType_Concrete):
     t = bytes
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, str):
             for alt in type(elem).__base64_altchars__:
                 try:
@@ -1000,18 +1026,19 @@ class ModelType_Bytes(ModelType_Concrete):
                                        f"values outside the range of 0-255.")
 
     @classmethod
-    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         alts = type(elem).__base64_altchars__
         alt = alts[0] if len(alts) > 0 else None
         return base64.b64encode(parsed, alt).decode("ascii")
 
 
+# noinspection PyPep8Naming
 class ModelType_Ephemeral(ModelType_Object):
     t = Ephemeral
 
     @classmethod
-    def is_valid(cls, val: SupportedUnion, elem: _BaseModelElem, **kwargs) -> bool:
+    def is_valid(cls, val: Supported, elem: _BaseModelElem, **kwargs) -> bool:
         if isinstance(val, Ephemeral):
             val = val.value
         if val is None:
@@ -1024,7 +1051,7 @@ class ModelType_Ephemeral(ModelType_Object):
         return False
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[SupportedUnion]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
         if isinstance(val, Ephemeral):
             val = val.value
         if cls.is_valid(val, elem, **kwargs):

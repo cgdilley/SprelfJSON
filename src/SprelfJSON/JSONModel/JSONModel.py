@@ -138,7 +138,7 @@ class JSONModelMeta(ABCMeta):
                 return v
             d = defaults.get(k, ())
             _orig, _gener = ClassHelpers.analyze_type(v)
-            if inspect.isclass(_orig) and any(issubclass(_orig, x) for x in (list, dict, set)):
+            if d != () and inspect.isclass(_orig) and any(issubclass(_orig, x) for x in (list, dict, set)):
                 if len(d) == 0:
                     return ModelElem(v, default_factory=_orig)
                 else:
@@ -209,11 +209,10 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
         model = self.model()
         dumped = {k: elem.dump_value(getattr(self, k), key=k)
                   for k, elem in model.items()
-                  if not elem.ignored and not elem.ephemeral}
+                  if not elem.ignored and not elem.ephemeral
+                  and (type(self).__include_defaults_in_json_output__ or
+                       not elem.has_default() or getattr(self, k) != elem.default)}
 
-        if not type(self).__include_defaults_in_json_output__:
-            dumped = {k: v for k, v in dumped.items()
-                      if not model[k].has_default() or v != model[k].default}
         if not type(self).__allow_null_json_output__:
             dumped = {k: v for k, v in dumped.items()
                       if v is not None}
