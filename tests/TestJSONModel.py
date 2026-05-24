@@ -1,5 +1,7 @@
 import json
 import unittest
+
+from SprelfJSON import JSONLike, JSONArrayLike, JSONValueLike, JSONContainerLike, JSONObjectLike
 from SprelfJSON.JSONModel import *
 from typing import Optional, Union
 
@@ -159,6 +161,30 @@ class TestJSONModel(unittest.TestCase):
         print(json.dumps(model2.to_json()))
         self.assertEqual(model2.maybe_int, 5)
         self.assertEqual(model2.union_val, 42)
+
+
+# ---------------------------
+# ✅ JSON-Like
+# ---------------------------
+
+    class JSONLikeModel(JSONModel):
+        json_like: JSONLike
+        json_array_like: JSONArrayLike
+        json_value_like: JSONValueLike
+        json_container_like: JSONContainerLike
+        json_object_like: JSONObjectLike
+
+    def test_json_like_types(self):
+        model = self.JSONLikeModel(
+            json_like=123,
+            json_array_like=[1, 2, 3],
+            json_value_like="abc",
+            json_container_like={"key": "value"},
+            json_object_like={"a": 1, "b": "c"}
+        )
+        # print(json.dumps(model.to_json()))
+        self.assertEqual(model.json_like, 123)
+        self.assertEqual(model.json_array_like, [1, 2, 3])
 
 
 # ---------------------------

@@ -40,7 +40,7 @@ class _JSONObjectLike(type):
         origin = get_origin(t)
         args = get_args(t)
         return ((inspect.isclass(origin) and issubclass(origin, cls.ALLOWED)) or origin in cls.ALLOWED) and \
-                len(args) == 2 and args[0] == str and issubclass(args[1], JSONLike)
+            len(args) == 2 and args[0] == str and issubclass(args[1], JSONLike)
 
 
 class JSONObjectLike(metaclass=_JSONObjectLike):
@@ -56,6 +56,7 @@ class _JSONValueLike(type):
         if t == JSONValueLike:
             return True
         return t is None or t == NoneType or issubclass(t, (str, int, float, bool))
+
 
 class JSONValueLike(metaclass=_JSONValueLike):
     ...
@@ -79,6 +80,7 @@ class _JSONArrayLike(type):
             not issubclass(origin, str) and \
             len(args) == 1 and issubclass(args[0], JSONLike)
 
+
 class JSONArrayLike(metaclass=_JSONArrayLike):
     ...
 
@@ -91,6 +93,7 @@ class _JSONContainerLike(type):
         if t in (JSONContainerLike, JSONObjectLike, JSONArrayLike):
             return True
         return issubclass(t, (JSONObjectLike, JSONArrayLike))
+
 
 class JSONContainerLike(metaclass=_JSONContainerLike):
     ...
@@ -105,6 +108,7 @@ class _JSONLike(type):
             return True
         return issubclass(t, (JSONValueLike, JSONObjectLike, JSONArrayLike))
 
+
 class JSONLike(metaclass=_JSONLike):
     ...
 
@@ -112,16 +116,17 @@ class JSONLike(metaclass=_JSONLike):
 #
 
 
-def is_json_type(value: Any, bound: JSONValue | JSONObject | JSONArray | JSONContainer | JSONType = JSONType) -> bool:
+def is_json_type(value: Any,
+                 bound: type[JSONValue] | type[JSONObject] | type[JSONArray] | type[JSONContainer] | type[JSONType] = JSONType) -> bool:
     if value is None:
         return bound in (JSONValue, JSONType)
     if isinstance(value, (bool, int, float, str)):
         return bound in (JSONValue, JSONType)
     if isinstance(value, list):
-        return bound in (JSONArray, JSONContainer, JSONType) and (is_json_type(item) for item in value)
+        return bound in (JSONArray, JSONContainer, JSONType) and all(is_json_type(item) for item in value)
     if isinstance(value, dict):
-        return bound in (JSONObject, JSONContainer, JSONType) and (isinstance(k, str) and is_json_type(v)
-                                                                   for k, v in value.items())
+        return bound in (JSONObject, JSONContainer, JSONType) and all(isinstance(k, str) and is_json_type(v)
+                                                                      for k, v in value.items())
     return False
 
 

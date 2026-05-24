@@ -1,5 +1,5 @@
 .idea/
-*.lock
+Pipfile.lock
 build/*
 *.env
 dist/*

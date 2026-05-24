@@ -22,6 +22,11 @@ dependencies = [
 license = "MIT"
 license-files = ["LICEN[SC]E.*"]
 
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
 [project.optional-dependencies]
 yaml = [
     "ruamel.yaml",
@@ -29,3 +34,9 @@ yaml = [
 
 [project.urls]
 repository = "https://github.com/cgdilley/SprelfJSON"
+
+[tool.uv]
+python-version = "3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

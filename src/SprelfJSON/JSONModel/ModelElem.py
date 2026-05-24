@@ -6,7 +6,7 @@ from SprelfJSON.Helpers import ClassHelpers, TimeHelpers
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 from SprelfJSON.Objects import Ephemeral
 
-from typing import Any, TypeVar, Callable, Union, Optional
+from typing import Any, TypeVar, Callable, Union, Optional, TypeAlias, get_args, Hashable
 from types import UnionType, NoneType, GeneratorType
 from collections.abc import Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection, \
     Iterator, Iterable, Generator, Set
@@ -21,15 +21,18 @@ from datetime import datetime, date, time, timedelta
 from enum import Enum, StrEnum, IntEnum, IntFlag
 
 T2 = TypeVar('T2')
-SupportedTypes = (dict, list, set, tuple, bool, str, int, float, bytes, type, None,
-                  datetime, date, time, timedelta, re.Pattern,
-                  Enum, StrEnum, IntEnum, IntFlag,
-                  Sequence, MutableSequence, Mapping, MutableMapping, MutableSet, Collection,
-                  Iterable, Iterator, Generator,
-                  JSONable, UnionType, NoneType,
-                  JSONValueLike, JSONContainerLike, JSONLike, JSONObjectLike, JSONArrayLike,
-                  Ephemeral)
-Supported = Union[SupportedTypes]
+Supported: TypeAlias = (
+        dict | list | set | tuple | bool | str | int | float | bytes | type | None
+        | datetime | date | time | timedelta | re.Pattern
+        | Enum | StrEnum | IntEnum | IntFlag
+        | Sequence | MutableSequence | Mapping | MutableMapping | MutableSet | Collection
+        | Iterable | Iterator | Generator
+        | JSONable | UnionType | NoneType
+        | JSONValueLike | JSONContainerLike | JSONLike | JSONObjectLike | JSONArrayLike
+        | Ephemeral
+)
+
+SupportedTypes: tuple[type[Any] | None, ...] = (None, *get_args(Supported))
 SupportedTypeMap = {t.__name__: t for t in SupportedTypes if t is not None}
 _SupportedTypes_O1 = set(SupportedTypes)
 
@@ -341,7 +344,7 @@ class AlternateModelElem(_BaseModelElem):
 
     def __init__(self, typ: type[T2],
                  transformer: Callable[[T2], Supported],
-                 jsonifier: Callable[[Any], SupportedTypes] | None = None):
+                 jsonifier: Callable[[Any], Supported] | None = None):
         super().__init__(typ)
         self.transformer = transformer
         self.jsonifier = jsonifier
@@ -369,7 +372,7 @@ class ModelType(ABC):
 
     @classmethod
     @abstractmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         pass
 
     @classmethod
@@ -412,7 +415,7 @@ class ModelType_None(ModelType):
         return val is None
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         return None
 
     @classmethod
@@ -452,7 +455,7 @@ class ModelType_Union(ModelType):
         return any(g.validate_type(val) for g in elem.generics)
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         for g in elem.generics:
             try:
                 return g.parse_value(val)
@@ -481,7 +484,7 @@ class ModelType_Optional(ModelType):
         return typing_inspect.is_optional_type(elem.origin)
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if val is None:
             return val
         if len(elem.generics) > 0:
@@ -510,7 +513,7 @@ class ModelType_Generator(ModelType):
         return elem.origin in (Generator, Iterable, Iterator, GeneratorType)
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"; value is not iterable.")
         if len(elem.generics) > 0:
@@ -540,7 +543,7 @@ class ModelType_Sequence(ModelType_Generator):
             and (len(elem.generics) == 0 or all(elem.generics[0].is_valid(x) for x in val))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"; value is not an iterable.")
         if len(elem.generics) > 0:
@@ -576,7 +579,7 @@ class ModelType_List(ModelType_Object):
                                                 for x in val)))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if not isinstance(val, Iterable):
             raise cls._parse_error(val, elem, f"; object is not iterable.", **kwargs)
         if len(elem.generics) > 0:
@@ -621,7 +624,7 @@ class ModelType_Tuple(ModelType_List):
         return all(g.is_valid(x) for g, x in zip(elem.generics, val))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if not isinstance(val, Collection):
             raise cls._parse_error(val, elem, f"; value is not a collection.", **kwargs)
         if len(elem.generics) == 2 and elem.generics[1].origin is Ellipsis:
@@ -667,7 +670,7 @@ class ModelType_Dict(ModelType):
                                                 for k, v in val.items())))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if ClassHelpers.check_generic_instance(val, Iterable, tuple[Any, Any]):
             d = {k: v for k, v in val}
         else:
@@ -710,7 +713,7 @@ class ModelType_Type(ModelType_Object):
                 (len(elem.generics) == 0 or ClassHelpers.check_subclass(val, elem.generics[0].annotated_type)))
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, str):
             if val.lower() == "datetime":
                 return datetime
@@ -745,7 +748,7 @@ class ModelType_Type(ModelType_Object):
 class ModelType_Concrete(ModelType_Object, ABC):
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, elem.origin):
             return val
         else:
@@ -753,7 +756,7 @@ class ModelType_Concrete(ModelType_Object, ABC):
 
     @classmethod
     @abstractmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         ...
 
 
@@ -765,7 +768,7 @@ class ModelType_Basic(ModelType_Concrete):
         return any(issubclass(elem.origin, x) for x in (str, int, float, bool))
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if issubclass(elem.origin, float) and isinstance(val, int):
             return float(val)
         raise cls._parse_error(val, elem, "", **kwargs)
@@ -783,7 +786,7 @@ class ModelType_Pattern(ModelType_Concrete):
         return issubclass(elem.origin, re.Pattern)
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, str):
             try:
                 return re.compile(val)
@@ -806,7 +809,7 @@ class ModelType_DateTime(ModelType_Concrete):
         return elem.origin == datetime
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         try:
             return TimeHelpers.parse_datetime(val)
         except ValueError:
@@ -826,7 +829,7 @@ class ModelType_Date(ModelType_Concrete):
         return elem.origin == date
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         try:
             return TimeHelpers.parse_date(val)
         except ValueError:
@@ -846,7 +849,7 @@ class ModelType_Time(ModelType_Concrete):
         return elem.origin == time
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         try:
             return TimeHelpers.parse_time(val)
         except ValueError:
@@ -862,7 +865,7 @@ class ModelType_TimeDelta(ModelType_Concrete):
     t = timedelta
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, str):
             if m := TimeHelpers.TIMEDELTA_REGEX.match(val):
                 groups = m.groupdict()
@@ -891,7 +894,7 @@ class ModelType_IntFlag(ModelType_Concrete):
     t = IntFlag
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, int):
             try:
                 return elem.origin(val)
@@ -909,7 +912,7 @@ class ModelType_IntEnum(ModelType_Concrete):
     t = IntEnum
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, int):
             try:
                 return elem.origin(val)
@@ -935,7 +938,7 @@ class ModelType_StrEnum(ModelType_Concrete):
     t = StrEnum
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, str):
             try:
                 return elem.origin(val)
@@ -959,7 +962,7 @@ class ModelType_Enum(ModelType_Concrete):
                                                          for x in (IntEnum, StrEnum, IntFlag))
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, str):
             try:
                 return elem.origin[val]
@@ -980,7 +983,7 @@ class ModelType_JSON(ModelType_Concrete):
     t = JSONConvertible
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, str):
             try:
                 return elem.origin.from_json(json.loads(val))
@@ -1001,7 +1004,7 @@ class ModelType_Bytes(ModelType_Concrete):
     t = bytes
 
     @classmethod
-    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def _convert(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, str):
             for alt in type(elem).__base64_altchars__:
                 try:
@@ -1026,7 +1029,7 @@ class ModelType_Bytes(ModelType_Concrete):
                                        f"values outside the range of 0-255.")
 
     @classmethod
-    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         alts = type(elem).__base64_altchars__
         alt = alts[0] if len(alts) > 0 else None
@@ -1051,7 +1054,7 @@ class ModelType_Ephemeral(ModelType_Object):
         return False
 
     @classmethod
-    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> type[Supported]:
+    def parse(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Supported:
         if isinstance(val, Ephemeral):
             val = val.value
         if cls.is_valid(val, elem, **kwargs):
