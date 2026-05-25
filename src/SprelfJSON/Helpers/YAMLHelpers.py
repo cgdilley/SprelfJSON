@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import functools
 import io
-from typing import TextIO
+from typing import TextIO, IO
 from SprelfJSON.JSONDefinitions import JSONType, JSONable
 
 YAMLError: type[Exception] | None = None
@@ -29,11 +29,11 @@ def dumps(obj: JSONType | JSONable) -> str:
         return f.getvalue()
 
 
-def dump(f: TextIO, obj: JSONType | JSONable) -> None:
+def dump(f: TextIO | IO[str], obj: JSONType | JSONable) -> None:
     yaml().dump(jsonify(obj), f)
 
 
-def load(s: str | TextIO, default: JSONType, raise_errors: bool = False) -> JSONType:
+def load(s: str | TextIO | IO[str], default: JSONType, raise_errors: bool = False) -> JSONType:
     try:
         return yaml().load(s)
     except YAMLError:
@@ -42,7 +42,7 @@ def load(s: str | TextIO, default: JSONType, raise_errors: bool = False) -> JSON
         return default if default is not None else dict()
 
 
-def loads(s: str | TextIO, default: JSONType, raise_errors: bool = False) -> JSONType:
+def loads(s: str | TextIO | IO[str], default: JSONType, raise_errors: bool = False) -> JSONType:
     return load(s, default, raise_errors)
 
 

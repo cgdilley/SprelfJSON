@@ -306,3 +306,8 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
                                  f"{','.join(values.keys())}")
 
         return result
+
+
+class AbstractJSONModel(JSONModel):
+    __name_field_required__ = True
+    __include_name_in_json_output__ = True
