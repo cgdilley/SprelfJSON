@@ -801,11 +801,13 @@ class ModelType_Dict(ModelType):
             if all(isinstance(k, str) for k in d.keys()):
                 if inspect.isclass(elem.generics[0].origin) and issubclass(elem.generics[0].origin, str):
                     return {str(k): elem.generics[1].parse_value(v) for k, v in d.items()}
-                return {elem.generics[0].parse_value(json.loads(k)): elem.generics[1].parse_value(v)
-                        for k, v in d.items()}
-            else:
-                return {elem.generics[0].parse_value(k): elem.generics[1].parse_value(v)
-                        for k, v in d.items()}
+                try:
+                    return {elem.generics[0].parse_value(json.loads(k)): elem.generics[1].parse_value(v)
+                            for k, v in d.items()}
+                except json.JSONDecodeError:
+                    pass
+            return {elem.generics[0].parse_value(k): elem.generics[1].parse_value(v)
+                    for k, v in d.items()}
         raise cls._parse_error(val, elem, f"", **kwargs)
 
     @classmethod
