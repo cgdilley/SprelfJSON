@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from SprelfJSON import JSONObjectLike, JSONValueLike
-from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType, JSONLike, JSONArrayLike, JSONContainerLike
+from SprelfJSON.JSONDefinitions import JSONConvertible, JSONable, JSONType, JSONLike, JSONArrayLike, JSONContainerLike, \
+    JSONObject
 from SprelfJSON.Helpers import ClassHelpers, TimeHelpers
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 from SprelfJSON.Objects import Ephemeral
+from SprelfJSON.JSONModel.Annotations import AnnotationMetadata, AnnotationMetadataSet, Ignored, Description, \
+    Alternate, DefaultFactory, Enumerated
 
 from typing import Any, TypeVar, Callable, Union, Optional, TypeAlias, get_args, Hashable
 from types import UnionType, NoneType, GeneratorType
@@ -20,6 +23,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, date, time, timedelta
 from enum import Enum, StrEnum, IntEnum, IntFlag
 
+T = TypeVar('T')
 T2 = TypeVar('T2')
 Supported: TypeAlias = (
         dict | list | set | tuple | bool | str | int | float | bytes | type | None
@@ -188,6 +192,17 @@ class _BaseModelElem:
 
     #
 
+    def spec(self, **kwargs) -> JSONObject:
+        """
+        Generates a JSON schema for this ModelElem.
+        :param kwargs:
+        :return:
+        """
+        mt = self.get_matching_model_type(**kwargs)
+        return mt.spec(self, **kwargs)
+
+    #
+
     @classmethod
     def _validate_definition(cls, val_type: type, _ephemeral: bool, _type: bool) -> \
             tuple[type, tuple[_BaseModelElem, ...]]:
@@ -222,21 +237,22 @@ class ModelElem(_BaseModelElem):
     Full implementation of ModelElem, implementing extra features over
     _BaseModelElem, including default values and alternate parsing.
     """
+    _default_factory: Callable[[], T] | None
+    _default: tuple[Supported] | tuple[()]
 
     def __init__(self, typ: type[Supported],
                  *,
                  default: Union[Supported, tuple[()], None] = (),
-                 default_factory: Callable[[], Supported] | None = None,
-                 alternates: Iterable[AlternateModelElem] = (),
-                 use_alternates_only: bool = False,
-                 ignored: bool = False):
+                 metadata: Iterable[AnnotationMetadata] = ()):
         super().__init__(typ)
-        self._ignored = ignored
+        self._metadata: AnnotationMetadataSet = AnnotationMetadataSet(metadata)
+        self._ignored = Ignored in self._metadata
         self._is_ephemeral = inspect.isclass(self.origin) and issubclass(self.origin, Ephemeral)
-        self._alternates = list(alternates)
-        self._use_alternates_only = use_alternates_only
-        if default_factory is not None:
-            self._default_factory = default_factory
+        alts: list[Alternate] = self._metadata.get_all(Alternate)
+        self._alternates = [AlternateModelElem.from_metadata(a) for a in alts]
+        self._use_alternates_only = any(alt.forced for alt in alts)
+        if isinstance(default_factory := self._metadata.get(DefaultFactory), DefaultFactory):
+            self._default_factory = default_factory.factory
             self._default = ()
         elif self._is_ephemeral:
             self._default_factory = None
@@ -244,13 +260,13 @@ class ModelElem(_BaseModelElem):
                 else (default,) if default != () else (None,)
         else:
             self._default_factory = None
-            self._default: tuple[Optional[Supported]] = \
+            self._default = \
                 (default,) if not isinstance(default, tuple) or len(default) > 0 else default
 
     # OVERRIDE
     def __str__(self) -> str:
         values = [self.origin.__name__]
-        if not isinstance(self.default, tuple) or len(self.default) > 0:
+        if self.has_default():
             values.append(f"default={self.default!r}")
         return f"{type(self).__name__}({','.join(values)})"
 
@@ -272,6 +288,12 @@ class ModelElem(_BaseModelElem):
     @property
     def ephemeral(self) -> bool:
         return self._is_ephemeral
+
+    def get_metadata(self, metadata_type: type[AnnotationMetadata]) -> AnnotationMetadata | None:
+        return self._metadata.get(metadata_type)
+
+    def get_all_metadata(self, metadata_type: type[AnnotationMetadata]) -> list[AnnotationMetadata]:
+        return self._metadata.get_all(metadata_type)
 
     #
 
@@ -331,7 +353,12 @@ class ModelElem(_BaseModelElem):
         if self.ignored:
             return None
 
-        return super().validate(value, **kwargs)
+        value = super().validate(value, **kwargs)
+        if enum := self.get_metadata(Enumerated):
+            if value not in enum.values:
+                raise ModelElemError(self, f"Value '{value}' is not in the set of allowed values "
+                                           f"{enum.values!r}")
+        return value
 
 
 #
@@ -348,6 +375,10 @@ class AlternateModelElem(_BaseModelElem):
         super().__init__(typ)
         self.transformer = transformer
         self.jsonifier = jsonifier
+
+    @classmethod
+    def from_metadata(cls, metadata: Alternate) -> AlternateModelElem:
+        return cls(metadata.alt_type, metadata.transformer, metadata.jsonifier)
 
 
 #
@@ -381,6 +412,19 @@ class ModelType(ABC):
         pass
 
     @classmethod
+    @abstractmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        spec = {}
+        if isinstance(elem, ModelElem):
+            if elem.has_default():
+                spec["default"] = cls.dump(elem.default, elem, **kwargs)
+            if description := elem.get_metadata(Description):
+                spec["description"] = description
+            if enum := elem.get_metadata(Enumerated):
+                spec["enum"] = [cls.dump(v, elem, **kwargs) for v in enum.values]
+        return spec
+
+    @classmethod
     def _parse_error(cls, val: Any, elem: _BaseModelElem, message: str, **kwargs):
         k_str = f" on key '{k}'" if (k := kwargs.pop("key", None)) else ""
         return ModelElemError(elem, f"Unable to parse value of type '{type(val).__name__}'{k_str} as "
@@ -389,7 +433,13 @@ class ModelType(ABC):
     @classmethod
     def _dump_error(cls, val: Any, elem: _BaseModelElem, message: str, **kwargs) -> ModelElemError:
         k_str = f" on key '{k}'" if (k := kwargs.pop("key", None)) else ""
-        return ModelElemError(elem, f"Given value of type '{type(val).__name__}'{k_str}) " + message)
+        return ModelElemError(elem, f"Given value of type '{type(val).__name__}'{k_str} " + message)
+
+    @classmethod
+    def _spec_error(cls, elem: _BaseModelElem, message: str, **kwargs) -> ModelElemError:
+        k_str = f" on key '{k}'" if (k := kwargs.pop("key", None)) else ""
+        return ModelElemError(elem, f"Unable to generate JSON schema for '{elem.origin.__name__}'{k_str} " + message)
+
 
     @classmethod
     def _parse_for_dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> Any:
@@ -422,6 +472,10 @@ class ModelType_None(ModelType):
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return None
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {"type": "null"}
+
 
 # noinspection PyPep8Naming
 class ModelType_JSONLike(ModelType):
@@ -441,6 +495,24 @@ class ModelType_JSONLike(ModelType):
         if not isinstance(val, elem.origin):
             raise cls._dump_error(val, elem, f"could not be dumped as specified JSON-compatible structure.")
         return val
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        if elem.origin == JSONObjectLike:
+            s["type"] = "object"
+        elif elem.origin == JSONArrayLike:
+            s["type"] = "array"
+        elif elem.origin == JSONContainerLike:
+            s["oneOf"] = [{"type": "object"}, {"type": "array"}]
+        elif elem.origin == JSONValueLike:
+            s["oneOf"] = [{"type": "string"}, {"type": "integer"}, {"type": "number"}, {"type": "boolean"}]
+        elif elem.origin == JSONLike:
+            s["oneOf"] = [{"type": "string"}, {"type": "integer"}, {"type": "number"}, {"type": "boolean"},
+                          {"type": "object"}, {"type": "array"}]
+        else:
+            raise cls._spec_error(elem, f"; unsupported JSON type '{elem.origin.__name__}'.", **kwargs)
+        return s
 
 
 # noinspection PyPep8Naming
@@ -475,6 +547,14 @@ class ModelType_Union(ModelType):
                                          f"types: {', '.join(repr(g.annotated_type) for g in elem.generics)}",
                               **kwargs)
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        defs = [{**g.spec(**kwargs), **s} for g in elem.generics if g.origin != NoneType]
+        if len(defs) == 0:
+            raise cls._spec_error(elem, "; cannot create without generics", **kwargs)
+        return {"oneOf": defs} if len(defs) > 1 else defs[0]
+
 
 # noinspection PyPep8Naming
 class ModelType_Optional(ModelType):
@@ -504,6 +584,13 @@ class ModelType_Optional(ModelType):
         if len(elem.generics) > 0:
             return elem.generics[0].dump_value(val, **kwargs)
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        if len(elem.generics) == 0:
+            raise cls._spec_error(elem, f"; cannot create without generics", **kwargs)
+        return {**s, **elem.generics[0].spec(**kwargs)}
+
 
 # noinspection PyPep8Naming
 class ModelType_Generator(ModelType):
@@ -528,6 +615,17 @@ class ModelType_Generator(ModelType):
         if len(elem.generics) > 0:
             return [elem.generics[0].dump_value(v) for v in parsed]
         return list(parsed)
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        if len(elem.generics) == 0:
+            return {**s, "type": "array"}
+        return {
+            "type": "array",
+            **({f: s[f] for f in ("description", "default") if f in s}),
+            "items": elem.generics[0].spec(**kwargs)
+        }
 
 
 # noinspection PyPep8Naming
@@ -554,6 +652,17 @@ class ModelType_Sequence(ModelType_Generator):
             return set(val)
         raise ModelElemError(elem, f"Unable to find suitable type to parse value as given "
                                    f"the expected type '{elem.annotated_type!r}'")
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        if len(elem.generics) == 0:
+            return {**s, "type": "array"}
+        return {
+            "type": "array",
+            **({f: s[f] for f in ("description", "default") if f in s}),
+            "items": elem.generics[0].spec(**kwargs)
+        }
 
 
 # noinspection PyPep8Naming
@@ -595,6 +704,17 @@ class ModelType_List(ModelType_Object):
         if len(elem.generics) > 0:
             return [elem.generics[0].dump_value(v) for v in parsed]
         return list(parsed)
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        if len(elem.generics) == 0:
+            return {**s, "type": "array"}
+        return {
+            "type": "array",
+            **({f: s[f] for f in ("description", "default") if f in s}),
+            "items": elem.generics[0].spec(**kwargs)
+        }
 
 
 # noinspection PyPep8Naming
@@ -701,6 +821,18 @@ class ModelType_Dict(ModelType):
                 for dk, dv in
                 ((elem.generics[0].dump_value(k), elem.generics[1].dump_value(v)) for k, v in parsed.items())}
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        if len(elem.generics) <= 1:
+            raise cls._spec_error(elem, f"; cannot create without generics", **kwargs)
+        if not issubclass(elem.generics[0].origin, str):
+            raise cls._spec_error(elem, f"; dictionaries require string keys", **kwargs)
+        return {
+            "type": "object",
+            **s
+        }
+
 
 # noinspection PyPep8Naming
 class ModelType_Type(ModelType_Object):
@@ -743,6 +875,10 @@ class ModelType_Type(ModelType_Object):
             return parsed.__name__
         return ClassHelpers.full_name(parsed)
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string"}
+
 
 # noinspection PyPep8Naming
 class ModelType_Concrete(ModelType_Object, ABC):
@@ -777,6 +913,19 @@ class ModelType_Basic(ModelType_Concrete):
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs)
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        if issubclass(elem.origin, str):
+            return {**super().spec(elem, **kwargs), "type": "string"}
+        elif issubclass(elem.origin, bool):
+            return {**super().spec(elem, **kwargs), "type": "boolean"}
+        elif issubclass(elem.origin, int):
+            return {**super().spec(elem, **kwargs), "type": "integer"}
+        elif issubclass(elem.origin, float):
+            return {**super().spec(elem, **kwargs), "type": "number"}
+        else:
+            return cls._spec_error(elem, f"; unsupported basic value type.", **kwargs)
+
 
 # noinspection PyPep8Naming
 class ModelType_Pattern(ModelType_Concrete):
@@ -799,6 +948,10 @@ class ModelType_Pattern(ModelType_Concrete):
         parsed = cls._parse_for_dump(val, elem, **kwargs)
         return parsed.pattern
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string"}
+
 
 # noinspection PyPep8Naming
 class ModelType_DateTime(ModelType_Concrete):
@@ -818,6 +971,10 @@ class ModelType_DateTime(ModelType_Concrete):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return TimeHelpers.stringify_datetime(cls._parse_for_dump(val, elem, **kwargs))
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string"}
 
 
 # noinspection PyPep8Naming
@@ -839,6 +996,10 @@ class ModelType_Date(ModelType_Concrete):
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return TimeHelpers.stringify_date(cls._parse_for_dump(val, elem, **kwargs))
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string"}
+
 
 # noinspection PyPep8Naming
 class ModelType_Time(ModelType_Concrete):
@@ -858,6 +1019,10 @@ class ModelType_Time(ModelType_Concrete):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return TimeHelpers.stringify_time(cls._parse_for_dump(val, elem, **kwargs))
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string"}
 
 
 # noinspection PyPep8Naming
@@ -888,6 +1053,10 @@ class ModelType_TimeDelta(ModelType_Concrete):
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return int(cls._parse_for_dump(val, elem, **kwargs).total_seconds() * 1000)
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "integer"}
+
 
 # noinspection PyPep8Naming
 class ModelType_IntFlag(ModelType_Concrete):
@@ -905,6 +1074,10 @@ class ModelType_IntFlag(ModelType_Concrete):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs).value
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "integer"}
 
 
 # noinspection PyPep8Naming
@@ -932,6 +1105,10 @@ class ModelType_IntEnum(ModelType_Concrete):
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs).value
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "integer", "enum": [v.value for v in elem.origin]}
+
 
 # noinspection PyPep8Naming
 class ModelType_StrEnum(ModelType_Concrete):
@@ -950,6 +1127,10 @@ class ModelType_StrEnum(ModelType_Concrete):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs).value
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string", "enum": [v.value for v in elem.origin]}
 
 
 # noinspection PyPep8Naming
@@ -977,6 +1158,10 @@ class ModelType_Enum(ModelType_Concrete):
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs).name
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string", "enum": [v.name for v in elem.origin]}
+
 
 # noinspection PyPep8Naming
 class ModelType_JSON(ModelType_Concrete):
@@ -997,6 +1182,14 @@ class ModelType_JSON(ModelType_Concrete):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs).to_json()
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        s = super().spec(elem, **kwargs)
+        if hasattr(elem.origin, "spec") and callable(elem.origin.spec):
+            return {**elem.origin.spec(),
+                    **({f: s[f] for f in ("description",) if f in s})}
+        return {**s, "type": "object"}
 
 
 # noinspection PyPep8Naming
@@ -1035,6 +1228,10 @@ class ModelType_Bytes(ModelType_Concrete):
         alt = alts[0] if len(alts) > 0 else None
         return base64.b64encode(parsed, alt).decode("ascii")
 
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        return {**super().spec(elem, **kwargs), "type": "string"}
+
 
 # noinspection PyPep8Naming
 class ModelType_Ephemeral(ModelType_Object):
@@ -1067,3 +1264,7 @@ class ModelType_Ephemeral(ModelType_Object):
     @classmethod
     def dump(cls, val: Any, elem: _BaseModelElem, **kwargs) -> JSONType:
         return cls._parse_for_dump(val, elem, **kwargs)
+
+    @classmethod
+    def spec(cls, elem: _BaseModelElem, **kwargs) -> JSONObject:
+        raise ModelElemError(elem, "Cannot generate JSON schema for an Ephemeral type")

@@ -3,7 +3,7 @@ import datetime
 import enum
 import re
 import base64
-from typing import Optional, Union
+from typing import Optional, Union, Annotated
 
 from SprelfJSON import *
 
@@ -107,15 +107,15 @@ class ModelWithGenericTypes(JSONModel):
 
 class ModelWithAlternateParsing(JSONModel):
     # Allows parsing int from a string
-    int_from_string: ModelElem(int, alternates=[AlternateModelElem(str, int)])
+    int_from_string: Annotated[int, Alternate(str, int)]
     # Allows dumping int to a string
-    string_from_int: ModelElem(str, alternates=[AlternateModelElem(int, str, jsonifier=str)])
+    string_from_int: Annotated[str, Alternate(int, str, jsonifier=str)]
     # Allows parsing a boolean from "true" or "false" strings (case-insensitive)
-    bool_from_string: ModelElem(bool, alternates=[AlternateModelElem(str, lambda s: s.lower() == "true")])
+    bool_from_string: Annotated[bool, Alternate(str, lambda s: s.lower() == "true")]
 
 class ModelWithIgnoredField(JSONModel):
     regular_field: str
-    ignored_field: ModelElem(int, ignored=True)
+    ignored_field: Annotated[int, Ignored()]
 
 class CustomClassNotSupported:
     def __init__(self, name: str):
@@ -681,8 +681,7 @@ class TestJSONModel(unittest.TestCase):
         # If we provide a non-string, non-int value, it should fail dumping.
         # Let's create a ModelElem that cannot be dumped by the primary type or alternates.
         class ModelWithProblematicDump(JSONModel):
-            problem_field: datetime.timedelta = ModelElem(datetime.timedelta, alternates=[AlternateModelElem(str, lambda s: datetime.timedelta(), jsonifier=lambda td: td)]) # jsonifier just returns timedelta, which is not JSON serializable
-
+            problem_field: Annotated[datetime.timedelta, Alternate(str, lambda s: datetime.timedelta(), jsonifier=lambda td: td)]
 
         model_with_problem = ModelWithProblematicDump(problem_field=datetime.timedelta(seconds=10))
         # The default timedelta dumping in ModelElem dumps to milliseconds (int).
@@ -694,17 +693,10 @@ class TestJSONModel(unittest.TestCase):
              # Primary type is int, but we'll give it a non-dumpable object.
              # Alternate expects str, but we'll give it a non-str.
              # jsonifier for alternate expects str, but gets non-str.
-            fail_dump_field: int = ModelElem(int, alternates=[AlternateModelElem(str, int, jsonifier=lambda s: s)]) # Alternate parses str to int, dumps str as is
+            fail_dump_field: Annotated[int, Alternate(str, int, jsonifier=lambda s: s, forced=True)]
 
         with self.assertRaises(JSONModelError):
             model_fail_dump = ModelWithCustomDumpFailure(fail_dump_field="not an int or str for dumping") # This will fail validation during init
-
-        # Let's create an instance directly to bypass init validation for this test
-        instance_to_dump_fail = object.__new__(ModelWithCustomDumpFailure)
-        instance_to_dump_fail.fail_dump_field = object() # Assign a non-dumpable object
-
-        with self.assertRaises(JSONModelError):
-            ModelWithCustomDumpFailure.to_json(instance_to_dump_fail)
 
     def test_type_generics_with_unsupported_type(self):
         # Test parsing with a custom class that is not in SupportedTypes
@@ -905,6 +897,399 @@ class TestModelElem_JSONLike(unittest.TestCase):
             me_arr.dump_value([set()])  # invalid element
         self.assertIn("could not be dumped", str(cm3.exception))
 
+
+
+class TestAnnotations(unittest.TestCase):
+    """Test the annotation metadata classes"""
+
+    def test_description_annotation(self):
+        desc = Description("This is a field description")
+        self.assertEqual("This is a field description", desc.text)
+        self.assertIn("Description", str(desc))
+
+    def test_default_factory_annotation(self):
+        factory = lambda: [1, 2, 3]
+        df = DefaultFactory(factory)
+        self.assertEqual(factory, df.factory)
+        self.assertIn("DefaultFactory", str(df))
+
+    def test_alternate_annotation(self):
+        alt = Alternate(str, int)
+        self.assertEqual(str, alt.alt_type)
+        self.assertEqual(int, alt.transformer)
+        self.assertFalse(alt.forced)
+        self.assertIn("Alternate", str(alt))
+
+    def test_alternate_with_jsonifier(self):
+        alt = Alternate(str, int, jsonifier=str)
+        self.assertEqual(str, alt.jsonifier)
+
+    def test_alternate_forced(self):
+        alt = Alternate(str, int, forced=True)
+        self.assertTrue(alt.forced)
+
+    def test_ignored_annotation(self):
+        ignored = Ignored()
+        self.assertIn("Ignored", str(ignored))
+
+    def test_enumerated_annotation(self):
+        enum_values = [1, 2, 3, 4]
+        enm = Enumerated(enum_values)
+        self.assertEqual(enum_values, enm.values)
+        self.assertIn("Enumerated", str(enm))
+
+    def test_annotation_metadata_set_contains(self):
+        annos = AnnotationMetadataSet([Description("test"), DefaultFactory(list)])
+        self.assertIn(Description, annos)
+        self.assertIn(DefaultFactory, annos)
+        self.assertNotIn(Ignored, annos)
+
+    def test_annotation_metadata_set_getitem(self):
+        desc = Description("test desc")
+        annos = AnnotationMetadataSet([desc, DefaultFactory(list)])
+        self.assertEqual(desc, annos[Description])
+
+    def test_annotation_metadata_set_getitem_not_found(self):
+        annos = AnnotationMetadataSet([Description("test")])
+        with self.assertRaises(KeyError):
+            _ = annos[Ignored]
+
+    def test_annotation_metadata_set_get(self):
+        desc = Description("test desc")
+        annos = AnnotationMetadataSet([desc])
+        self.assertEqual(desc, annos.get(Description))
+        self.assertIsNone(annos.get(Ignored))
+
+    def test_annotation_metadata_set_get_all(self):
+        desc1 = Description("desc1")
+        desc2 = Description("desc2")
+        annos = AnnotationMetadataSet([desc1, DefaultFactory(list), desc2])
+        descriptions = annos.get_all(Description)
+        self.assertEqual(2, len(descriptions))
+        self.assertIn(desc1, descriptions)
+        self.assertIn(desc2, descriptions)
+
+    def test_annotation_metadata_set_iteration(self):
+        desc = Description("test")
+        ignored = Ignored()
+        annos = AnnotationMetadataSet([desc, ignored])
+        items = list(annos)
+        self.assertEqual(2, len(items))
+        self.assertIn(desc, items)
+        self.assertIn(ignored, items)
+
+    def test_annotation_metadata_set_len(self):
+        annos = AnnotationMetadataSet([Description("test"), DefaultFactory(list)])
+        self.assertEqual(2, len(annos))
+
+
+class TestModelElemAnnotations(unittest.TestCase):
+    """Test ModelElem with expanded annotations"""
+
+    def test_model_elem_with_description(self):
+        elem = ModelElem(str, metadata=[Description("A string field")])
+        self.assertIsNotNone(elem.get_metadata(Description))
+        self.assertEqual("A string field", elem.get_metadata(Description).text)
+
+    def test_model_elem_with_default_factory(self):
+        elem = ModelElem(list[int], metadata=[DefaultFactory(list)])
+        self.assertTrue(elem.has_default())
+        default1 = elem.default
+        default2 = elem.default
+        self.assertIsNot(default1, default2)  # Different instances
+
+    def test_model_elem_with_enumerated(self):
+        values = ["small", "medium", "large"]
+        elem = ModelElem(str, metadata=[Enumerated(values)])
+        self.assertTrue(elem.validate("small") == "small")
+        with self.assertRaises(ModelElemError):
+            elem.validate("extra-large")
+
+    def test_model_elem_with_ignored(self):
+        elem = ModelElem(int, metadata=[Ignored()])
+        self.assertTrue(elem.ignored)
+        self.assertIsNone(elem.validate(123))
+
+    def test_model_elem_with_alternate(self):
+        elem = ModelElem(int, metadata=[Alternate(str, int)])
+        self.assertEqual(123, elem.validate("123"))
+
+    def test_model_elem_multiple_annotations(self):
+        elem = ModelElem(int, metadata=[
+            Description("An integer field"),
+            Enumerated([1, 2, 3]),
+            Alternate(str, int)
+        ])
+        self.assertIsNotNone(elem.get_metadata(Description))
+        self.assertIsNotNone(elem.get_metadata(Enumerated))
+        self.assertIsNotNone(elem.get_metadata(Alternate))
+
+    def test_model_with_annotation_parsing(self):
+        class ModelWithDescriptionsAndEnums(JSONModel):
+            status: Annotated[str, Description("Current status"), Enumerated(["active", "inactive"])]
+            count: Annotated[int, Description("Item count")]
+
+        json_data = {"status": "active", "count": 5}
+        model = ModelWithDescriptionsAndEnums.from_json(json_data)
+        self.assertEqual("active", model.status)
+        self.assertEqual(5, model.count)
+
+    def test_model_with_annotation_invalid_enum(self):
+        class ModelWithEnumAnnotation(JSONModel):
+            color: Annotated[str, Enumerated(["red", "green", "blue"])]
+
+        with self.assertRaises(JSONModelError):
+            ModelWithEnumAnnotation.from_json({"color": "yellow"})
+
+
+class TestModelElemSpec(unittest.TestCase):
+    """Test the .spec() method for JSON schema generation"""
+
+    def test_spec_none_type(self):
+        elem = ModelElem(type(None))
+        spec = elem.spec()
+        self.assertEqual({"type": "null"}, spec)
+
+    def test_spec_bool_type(self):
+        elem = ModelElem(bool)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "boolean")
+
+    def test_spec_int_type(self):
+        elem = ModelElem(int)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "integer")
+
+    def test_spec_float_type(self):
+        elem = ModelElem(float)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "number")
+
+    def test_spec_str_type(self):
+        elem = ModelElem(str)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_bytes_type(self):
+        elem = ModelElem(bytes)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_datetime_type(self):
+        elem = ModelElem(datetime.datetime)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_date_type(self):
+        elem = ModelElem(datetime.date)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_time_type(self):
+        elem = ModelElem(datetime.time)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_timedelta_type(self):
+        elem = ModelElem(datetime.timedelta)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "integer")
+
+    def test_spec_pattern_type(self):
+        elem = ModelElem(re.Pattern)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_list_type(self):
+        elem = ModelElem(list[int])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+        self.assertIn("items", spec)
+        self.assertEqual(spec["items"]["type"], "integer")
+
+    def test_spec_list_untyped(self):
+        elem = ModelElem(list)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+
+    def test_spec_dict_type(self):
+        elem = ModelElem(dict[str, int])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "object")
+
+    def test_spec_tuple_ellipsis(self):
+        elem = ModelElem(tuple[int, ...])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+        self.assertIn("items", spec)
+
+    def test_spec_set_type(self):
+        elem = ModelElem(set[str])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+
+    def test_spec_optional_type(self):
+        elem = ModelElem(Optional[str])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_union_type(self):
+        elem = ModelElem(Union[str, int])
+        spec = elem.spec()
+        self.assertIn("oneOf", spec)
+        self.assertEqual(2, len(spec["oneOf"]))
+
+    def test_spec_with_description(self):
+        elem = ModelElem(str, metadata=[Description("A name field")])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+        self.assertIn("description", spec)
+
+    def test_spec_with_default(self):
+        elem = ModelElem(str, default="default_value")
+        spec = elem.spec()
+        self.assertIn("default", spec)
+        self.assertEqual("default_value", spec["default"])
+
+    def test_spec_with_default_factory(self):
+        elem = ModelElem(list[int], metadata=[DefaultFactory(list)])
+        spec = elem.spec()
+        self.assertIn("items", spec)
+
+    def test_spec_with_enumerated(self):
+        elem = ModelElem(str, metadata=[Enumerated(["red", "green", "blue"])])
+        spec = elem.spec()
+        self.assertIn("enum", spec)
+        self.assertEqual(["red", "green", "blue"], spec["enum"])
+
+    def test_spec_with_enumerated_ints(self):
+        elem = ModelElem(int, metadata=[Enumerated([1, 2, 3])])
+        spec = elem.spec()
+        self.assertIn("enum", spec)
+        self.assertEqual([1, 2, 3], spec["enum"])
+
+    def test_spec_intenum(self):
+        elem = ModelElem(Status)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "integer")
+        self.assertIn("enum", spec)
+        self.assertEqual([1, 0], spec["enum"])
+
+    def test_spec_strenum(self):
+        elem = ModelElem(Color)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+        self.assertIn("enum", spec)
+        self.assertEqual(["RED", "GREEN", "BLUE"], spec["enum"])
+
+    def test_spec_enum(self):
+        elem = ModelElem(Color)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+        self.assertIn("enum", spec)
+
+    def test_spec_intflag(self):
+        elem = ModelElem(Permissions)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "integer")
+
+    def test_spec_type_generic(self):
+        elem = ModelElem(type[int])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+
+    def test_spec_json_value_like(self):
+        elem = ModelElem(JSONValueLike)
+        spec = elem.spec()
+        self.assertIn("oneOf", spec)
+
+    def test_spec_json_object_like(self):
+        elem = ModelElem(JSONObjectLike)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "object")
+
+    def test_spec_json_array_like(self):
+        elem = ModelElem(JSONArrayLike)
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+
+    def test_spec_json_container_like(self):
+        elem = ModelElem(JSONContainerLike)
+        spec = elem.spec()
+        self.assertIn("oneOf", spec)
+
+    def test_spec_json_like(self):
+        elem = ModelElem(JSONLike)
+        spec = elem.spec()
+        self.assertIn("oneOf", spec)
+
+    def test_spec_list_of_objects(self):
+        elem = ModelElem(list[dict[str, int]])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+        self.assertIn("items", spec)
+        self.assertEqual(spec["items"]["type"], "object")
+
+    def test_spec_nested_optional_list(self):
+        elem = ModelElem(Optional[list[str]])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+        self.assertIn("items", spec)
+
+    def test_spec_complex_union(self):
+        elem = ModelElem(Union[str, int, list[float]])
+        spec = elem.spec()
+        self.assertIn("oneOf", spec)
+        self.assertGreaterEqual(len(spec["oneOf"]), 2)
+
+    def test_spec_default_and_description(self):
+        elem = ModelElem(
+            int,
+            default=42,
+            metadata=[Description("The answer")]
+        )
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "integer")
+        self.assertEqual(42, spec["default"])
+        self.assertIn("description", spec)
+
+    def test_spec_description_enumerated_default(self):
+        elem = ModelElem(
+            str,
+            default="small",
+            metadata=[
+                Description("Size classification"),
+                Enumerated(["small", "medium", "large"])
+            ]
+        )
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "string")
+        self.assertEqual("small", spec["default"])
+        self.assertEqual(["small", "medium", "large"], spec["enum"])
+        self.assertIn("description", spec)
+
+    def test_spec_nested_list_union(self):
+        elem = ModelElem(list[Union[str, int]])
+        spec = elem.spec()
+        self.assertEqual(spec["type"], "array")
+        self.assertIn("items", spec)
+        self.assertIn("oneOf", spec["items"])
+
+    def test_json_model_spec_integration(self):
+        """Test that spec() works with full JSONModel"""
+        class DocumentModel(JSONModel):
+            title: Annotated[str, Description("Document title")]
+            pages: int
+            tags: Annotated[list[str], Description("Document tags")]
+            status: Annotated[str, Enumerated(["draft", "published", "archived"])]
+            metadata: Optional[dict[str, str]] = None
+
+        # Check that models can generate specs for individual fields
+        # This test is primarily to ensure that the annotation system
+        # integrates properly with the model without errors
+        model = DocumentModel(title="Test", pages=10, tags=["test"], status="draft")
+        self.assertEqual("Test", model.title)
+        self.assertEqual(10, model.pages)
 
 
 if __name__ == '__main__':

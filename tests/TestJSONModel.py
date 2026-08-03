@@ -42,7 +42,7 @@ class TestJSONModel(unittest.TestCase):
 
     class DefaultsModel(JSONModel):
         required: int
-        optional: ModelElem(int, default=42)
+        optional: int = 42
         optional_str: str = "abc"
 
 

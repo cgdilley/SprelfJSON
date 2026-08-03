@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABCMeta, ABC, abstractmethod
-from typing import Any, Hashable, Self, Mapping, dataclass_transform, TypeAlias
+from typing import Any, Hashable, Self, Mapping, dataclass_transform, TypeAlias, Annotated, get_args
 from types import resolve_bases, new_class, GenericAlias
 import typing
 import itertools
@@ -15,6 +15,8 @@ from SprelfJSON.JSONDefinitions import JSONObject, JSONType, JSONConvertible, JS
     JSONContainer, JSONValue, JSONLike, JSONObjectLike, JSONArray
 from SprelfJSON.JSONModel.JSONModelError import JSONModelError
 from SprelfJSON.Helpers import ClassHelpers
+from SprelfJSON.JSONModel.Annotations import AnnotationMetadata, Alternate, DefaultFactory, Description, \
+    Ignored, AnnotationMetadataSet
 
 
 #
@@ -37,13 +39,18 @@ class JSONModelMeta(ABCMeta):
     __eval_context__ = {**globals(),
                         **SupportedTypeMap,
                         **typing.__dict__,
-                        ModelElem.__name__: ModelElem,
-                        AlternateModelElem.__name__: AlternateModelElem}
+                        **{c.__name__: c for c in (ModelElem,
+                                                   Alternate,
+                                                   AlternateModelElem,
+                                                   DefaultFactory,
+                                                   Description,
+                                                   Ignored)}}
     __annotation_conversions__ = {JSONObject: JSONObjectLike,
                                   JSONArray: JSONArrayLike,
                                   JSONType: JSONLike,
                                   JSONContainer: JSONContainerLike,
                                   JSONValue: JSONValueLike}
+    __schema_description__: str = ""
 
     @classmethod
     def _eval(cls, s: Any, context: dict):
@@ -138,12 +145,21 @@ class JSONModelMeta(ABCMeta):
                 return v
             d = defaults.get(k, ())
             _orig, _gener = ClassHelpers.analyze_type(v)
+            metadata: list[AnnotationMetadata] = []
+            if _orig == Annotated:
+                if len(_gener) == 0:
+                    raise JSONModelError(f"Annotated type for key '{k}' has no arguments")
+                v = _gener[0]
+                if any(not isinstance(md, AnnotationMetadata) for md in _gener[1:]):
+                    raise JSONModelError(f"Annotated type for key '{k}' has invalid metadata")
+                metadata.extend(_gener[1:])
             if d != () and inspect.isclass(_orig) and any(issubclass(_orig, x) for x in (list, dict, set)):
                 if len(d) == 0:
-                    return ModelElem(v, default_factory=_orig)
+                    metadata.append(DefaultFactory(factory=_orig))
                 else:
-                    return ModelElem(v, default_factory=lambda: _orig(d))
-            return ModelElem(v, default=d)
+                    metadata.append(DefaultFactory(lambda: _orig(d)))
+                return ModelElem(v, metadata=metadata)
+            return ModelElem(v, default=d, metadata=metadata)
 
         full_anno: dict[str, ModelElem] = \
             {k: _build_model_elem(k, v)
@@ -306,6 +322,24 @@ class JSONModel(JSONConvertible, ABC, metaclass=JSONModelMeta):
                                  f"{','.join(values.keys())}")
 
         return result
+
+    #
+    # This section is for generating a JSON schema for the model
+    #
+
+    @classmethod
+    def spec(cls, **kwargs) -> JSONObject:
+        model = cls.model()
+        properties = {
+            k: m.spec(**kwargs) for k, m in model.items()
+        }
+        required = [k for k, m in model.items() if not m.ignored and not m.ephemeral and not m.has_default()]
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": required,
+            "description": cls.__schema_description__
+        }
 
 
 class AbstractJSONModel(JSONModel):

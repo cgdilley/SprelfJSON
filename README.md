@@ -96,12 +96,118 @@ class Settings(JSONModel):
     notifications_enabled: bool = True
 ```
 
-For mutable default values (like lists or dictionaries), use `ModelElem` with `default_factory`:
+For mutable default values, use `typing.Annotated` with `DefaultFactory`:
 
 ```python
+from typing import Annotated
+from SprelfJSON.JSONModel import DefaultFactory
+
 class UserProfile(JSONModel):
     username: str
-    favorite_numbers: ModelElem(list[int], default_factory=list) # Use default_factory for mutable defaults
+    favorite_numbers: Annotated[list[int], DefaultFactory(list)]  # Use DefaultFactory for mutable defaults
+```
+
+This is not necessary with `list`, `set`, or `dict`; any default values are automatically wrapped with a `DefaultFactory`.
+
+```python
+class UserProfile(JsonModel):
+    username: str
+    favorite_numbers: list[int] = [] # This default value will be generated separately for each instance
+                # Equivalent to: Annotated[list[int], DefaultFactory(list)]
+    metadata: dict[str, str] = {"foo": "bar"} # Same with this
+                # Equivalent to: Annotated[dict[str, str], DefaultFactory(lambda: {"foo": "bar"})]
+
+```
+
+## Field Annotations
+
+The new annotation system uses Python's `typing.Annotated` to attach metadata to field type hints. This replaces the older `ModelElem` approach for most use cases. Multiple annotations can be combined on a single field.
+
+### Available Annotations
+
+#### Description
+Add descriptive documentation to a field:
+
+```python
+from typing import Annotated
+from SprelfJSON import JSONModel
+from SprelfJSON.JSONModel import Description
+
+class User(JSONModel):
+    name: Annotated[str, Description("The user's full name")]
+    age: Annotated[int, Description("The user's age in years")]
+```
+
+#### DefaultFactory
+Specify a factory function to generate default values for mutable types:
+
+```python
+from typing import Annotated
+from SprelfJSON import JSONModel
+from SprelfJSON.JSONModel import DefaultFactory
+
+class Config(JSONModel):
+    settings: Annotated[dict[str, str], DefaultFactory(dict)]
+    tags: Annotated[list[str], DefaultFactory(list)]
+```
+
+#### Alternate
+Define alternative types that can be parsed into or dumped from the primary type:
+
+```python
+from typing import Annotated
+from SprelfJSON import JSONModel
+from SprelfJSON.JSONModel import Alternate
+
+class TimeEntry(JSONModel):
+    # Can accept either int (milliseconds) or float (seconds)
+    duration: Annotated[float, Alternate(int, lambda ms: ms / 1000)]
+    
+    # Can accept string "true"/"false" and dump as string
+    active: Annotated[bool, Alternate(str, 
+                                      lambda s: s.lower() == "true",
+                                      jsonifier=lambda b: "true" if b else "false")]
+```
+
+The `Alternate` annotation parameters:
+- `alt_type`: The alternative type to parse from
+- `transformer`: Function to convert from the alternative type to the primary type
+- `jsonifier`: Optional function to convert from the primary type to the alternative type when dumping
+- `forced`: If `True`, only use the alternative type (don't try the primary type first)
+
+#### Ignored
+Mark a field to be ignored during JSON parsing and dumping:
+
+```python
+from typing import Annotated
+from SprelfJSON import JSONModel
+from SprelfJSON.JSONModel import Ignored
+
+class CacheEntry(JSONModel):
+    key: str
+    value: str
+    internal_cache: Annotated[dict[str, Any], Ignored] = None  # Not serialized
+```
+
+#### Combining Annotations
+
+Multiple annotations can be used together on a single field:
+
+```python
+from typing import Annotated
+from SprelfJSON import JSONModel
+from SprelfJSON.JSONModel import Description, DefaultFactory, Alternate
+
+class Article(JSONModel):
+    title: Annotated[str, Description("Article title")]
+    
+    tags: Annotated[list[str], 
+                    Description("Article tags"),
+                    DefaultFactory(list)]
+    
+    publish_date: Annotated[datetime.datetime,
+                            Description("ISO 8601 format or Unix timestamp"),
+                            Alternate(int, lambda ts: datetime.datetime.fromtimestamp(ts))]
 ```
 
 ## Handling Different Types
@@ -351,24 +457,27 @@ class ModelType_PatternExample(ModelType):
 
 
 ### Alternate Parsing and Dumping
-Use `AlternateModelElem` within a `ModelElem` definition to specify alternative ways to parse incoming data or dump outgoing data.
-These objects are defined like `ModelElem`, but expect to find a different type, and define a function to convert
-from that type to the original type that the `ModelElem` expects.
+Use `typing.Annotated` with the `Alternate` annotation to specify alternative ways to parse incoming data or dump outgoing data.
+The `Alternate` annotation allows you to define a transformer function for parsing and an optional jsonifier function for dumping.
 
-When parsing or dumping, it will first attempt to operate in its native type.  Only if that fails, it will then attempt
-doing so with each of the defined alternate definitions.  To override this behavior and forcibly use these alternates, you 
-may provide the `use_alternates_only` parameter.
+When parsing or dumping, it will first attempt to operate in its native type. Only if that fails, it will then attempt
+doing so with each of the defined alternate annotations. To override this behavior and forcibly use these alternates only,
+use `forced=True` when creating the `Alternate` annotation.
 
 ```python
-from SprelfJSON import JSONModel, ModelElem, AlternateModelElem
+from typing import Annotated
+from SprelfJSON import JSONModel
+from SprelfJSON.JSONModel import Alternate
 
 class DataItem(JSONModel):
     # Can parse an integer from a string
-    count: ModelElem(int, alternates=[AlternateModelElem(str, int)])
+    count: Annotated[int, Alternate(str, int)]
 
     # Can dump a boolean as a string "true" or "false"
-    is_valid: ModelElem(bool, alternates=[AlternateModelElem(str, lambda s: s.lower() == "true", jsonifier=lambda b: str(b).lower())],
-                        use_alternates_only=True)
+    is_valid: Annotated[bool, Alternate(str, 
+                                        lambda s: s.lower() == "true", 
+                                        jsonifier=lambda b: str(b).lower(),
+                                        forced=True)]
 
 # Example usage
 json_data = {
