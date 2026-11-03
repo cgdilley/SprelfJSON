@@ -55,7 +55,7 @@ class _JSONValueLike(type):
     def __subclasscheck__(cls, t: type) -> bool:
         if t == JSONValueLike:
             return True
-        return t is None or t == NoneType or issubclass(t, (str, int, float, bool))
+        return t is None or t == NoneType or (inspect.isclass(t) and issubclass(t, (str, int, float, bool)))
 
 
 class JSONValueLike(metaclass=_JSONValueLike):

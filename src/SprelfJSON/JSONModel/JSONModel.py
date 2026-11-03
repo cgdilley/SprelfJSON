@@ -6,6 +6,7 @@ from types import resolve_bases, new_class, GenericAlias
 import typing
 import itertools
 import inspect
+import sys
 
 import typing_inspect
 
@@ -28,6 +29,7 @@ class JSONModelMeta(ABCMeta):
     _FIELDS = "_fields"
     _JSON_MODEL = "__json_model__"
     _DEFAULTS = "__defaults__"
+    _IS_JSON_MODEL = "__is_json_model__"
     __json_model__: dict[str, ModelElem]
     __name_field__: str = "__name"
     __name_field_required__: bool = False
@@ -66,6 +68,17 @@ class JSONModelMeta(ABCMeta):
                                  f"nested classes are defined before the classes they're nested in, and "
                                  f"avoid circular references.")
 
+    @staticmethod
+    def _get_annotations(obj) -> dict[str, Any]:
+        # For bases that JSONModelMeta already processed, __annotations__ holds
+        # the already-resolved dict (set via setattr in __new__), so use it directly.
+        if getattr(obj, JSONModelMeta._IS_JSON_MODEL, False):
+            return dict(getattr(obj, "__annotations__", {}))
+        try:
+            return inspect.get_annotations(obj, eval_str=True)
+        except Exception:
+            return {}
+
     #
 
     def __new__(mcls: type[JSONModelMeta],
@@ -98,15 +111,36 @@ class JSONModelMeta(ABCMeta):
 
         for base in reversed(bases):
             if hasattr(base, mcls._ANNO):
-                given_anno.update(base.__annotations__)
+                given_anno.update(JSONModelMeta._get_annotations(base))
                 defaults.update(getattr(base, mcls._DEFAULTS, {}))
             if base == ABC:
                 namespace["__name_field_required__"] = True
                 namespace["__include_name_in_json_output__"] = True
 
-        given_anno.update(namespace.get(mcls._ANNO, {}))
+        #
+        # Fill in the namespace and build
+        #
+        namespace = {
+            **namespace,
+            mcls._DEFAULTS: defaults,
+            mcls._IS_JSON_MODEL: True
+        }
 
-        defaults.update({key: namespace[key] for key in given_anno.keys() if key in namespace})
+        new_cls = BUILD(name, bases, namespace)
+
+        if sys.version_info < (3, 14):
+            eval_context = {**JSONModelMeta.__eval_context__,
+                            **locals(),
+                            **{k: v for frame in reversed(inspect.stack()) for k, v in frame.frame.f_locals.items()},
+                            new_cls.__name__: new_cls,
+                            **{sc.__name__: sc for sc in ClassHelpers.all_subclasses(JSONModel)}}
+            _own_anno = {k: mcls._eval(v, eval_context)
+                         for k, v in namespace.get(mcls._ANNO, {}).items()}
+        else:
+            _own_anno = inspect.get_annotations(new_cls, eval_str=True)
+        given_anno.update(_own_anno)
+
+        defaults.update({key: namespace[key] for key in _own_anno.keys() if key in namespace})
         defaults.update({key: elem.default for key, elem in given_anno.items()
                          if isinstance(elem, ModelElem) and elem.has_default()})
         given_anno = {k: v for k, v in given_anno.items() if not k.startswith("_")}
@@ -116,29 +150,8 @@ class JSONModelMeta(ABCMeta):
             if hasattr(mcls, field):
                 defaults[field] = getattr(mcls, field)
 
-        #
-        # Fill in the namespace and build
-        #
-        namespace = {
-            **namespace,
-            mcls._DEFAULTS: defaults
-        }
-
-        new_cls = BUILD(name, bases, namespace)
-
-        #
-        # Parse the annotated strings to get actual types to enforce
-        #
-        eval_context = {**JSONModelMeta.__eval_context__,
-                        **locals(),
-                        **{k: v for frame in reversed(inspect.stack()) for k, v in frame.frame.f_locals.items()},
-                        new_cls.__name__: new_cls,
-                        **{sc.__name__: sc for sc in ClassHelpers.all_subclasses(JSONModel)}}
-
-        evaluated_anno = {k: mcls._eval(v, eval_context)
-                          for k, v in given_anno.items()}
         evaluated_anno = {k: mcls.__annotation_conversions__.get(v, v)
-                          for k, v in evaluated_anno.items()}
+                          for k, v in given_anno.items()}
 
         def _build_model_elem(k, v) -> ModelElem:
             if isinstance(v, ModelElem):

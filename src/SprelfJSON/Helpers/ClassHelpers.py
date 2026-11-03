@@ -9,6 +9,7 @@ import types
 import inspect
 import pydoc
 import builtins
+import os
 import sys
 
 from SprelfJSON.Helpers.Decorators import yield_unique
@@ -161,6 +162,17 @@ def locate_class(name: str) -> type | None:
     if len(split) > 1:
         module_path = ".".join(split[:-1])
         class_name = split[-1]
+
+        # Prefer already-loaded modules, matched by full name, trailing name or file name
+        # (e.g. 'TestJSONModel2' -> 'tests.TestJSONModel2', or '__main__' when the file is run directly)
+        for mod in list(sys.modules.values()):
+            if not isinstance(mod, ModuleType) or not mod.__name__:
+                continue
+            file_stem = os.path.splitext(os.path.basename(getattr(mod, "__file__", None) or ""))[0]
+            if mod.__name__ == module_path or mod.__name__.endswith("." + module_path) or file_stem == module_path:
+                obj = getattr(mod, class_name, None)
+                if isinstance(obj, type):
+                    return obj
 
         module = pydoc.locate(module_path)
         if isinstance(module, ModuleType):
