@@ -128,16 +128,17 @@ class JSONModelMeta(ABCMeta):
 
         new_cls = BUILD(name, bases, namespace)
 
+        eval_context = {**JSONModelMeta.__eval_context__,
+                        **locals(),
+                        **{k: v for frame in reversed(inspect.stack()) for k, v in frame.frame.f_locals.items()},
+                        new_cls.__name__: new_cls,
+                        **{sc.__name__: sc for sc in ClassHelpers.all_subclasses(JSONModel)}}
         if sys.version_info < (3, 14):
-            eval_context = {**JSONModelMeta.__eval_context__,
-                            **locals(),
-                            **{k: v for frame in reversed(inspect.stack()) for k, v in frame.frame.f_locals.items()},
-                            new_cls.__name__: new_cls,
-                            **{sc.__name__: sc for sc in ClassHelpers.all_subclasses(JSONModel)}}
             _own_anno = {k: mcls._eval(v, eval_context)
                          for k, v in namespace.get(mcls._ANNO, {}).items()}
         else:
-            _own_anno = inspect.get_annotations(new_cls, eval_str=True)
+            _own_anno = {k: mcls._eval(v, eval_context)
+                         for k, v in inspect.get_annotations(new_cls, eval_str=False).items()}
         given_anno.update(_own_anno)
 
         defaults.update({key: namespace[key] for key in _own_anno.keys() if key in namespace})
